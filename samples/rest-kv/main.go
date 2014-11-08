@@ -5,8 +5,8 @@ import (
 	"github.com/ant0ine/go-json-rest/rest"
 	"log"
 	"net/http"
-	"sync"
 	"strings"
+	"sync"
 )
 
 type Body struct {
@@ -72,7 +72,6 @@ func Delete(w rest.ResponseWriter, r *rest.Request) {
 	lock.Unlock()
 	w.WriteHeader(http.StatusOK)
 }
-
 
 func List(w rest.ResponseWriter, r *rest.Request) {
 	prefix := r.PathParam("prefix")
