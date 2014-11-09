@@ -8,10 +8,11 @@ import (
 type KVStore struct {
 	store map[string]*string
 	lock  *sync.RWMutex
+	replica []string
 }
 
-func NewKVStore() *KVStore {
-	return &KVStore{store: make(map[string]*string), lock: new(sync.RWMutex)}
+func NewKVStore(rep []string) *KVStore {
+	return &KVStore{store: make(map[string]*string), lock: new(sync.RWMutex), replica: rep}
 }
 
 func (s *KVStore) Get(key string) (value *string) {
@@ -25,6 +26,7 @@ func (s *KVStore) Put(key string, value *string) {
 	s.lock.Lock()
 	s.store[key] = value
 	s.lock.Unlock()
+	
 }
 
 func (s *KVStore) Delete(key string) {
