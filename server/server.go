@@ -3,10 +3,9 @@ package main
 import (
 	"fmt"
 	"github.com/ant0ine/go-json-rest/rest"
+	"github.com/robertli8629/cs244b_project/kv"
 	"log"
 	"net/http"
-	"strings"
-	"sync"
 	"os"
 )
 
@@ -41,19 +40,12 @@ func main() {
 	log.Fatal(http.ListenAndServe(portStr, &handler))
 }
 
-var store = map[string]*string{}
-
-var lock = sync.RWMutex{}
+var store = kv.NewKVStore()
 
 func Get(w rest.ResponseWriter, r *rest.Request) {
 	key := r.PathParam("key")
 
-	lock.RLock()
-	var value *string
-	if store[key] != nil {
-		value = store[key]
-	}
-	lock.RUnlock()
+	value := store.Get(key)
 
 	if value == nil {
 		rest.NotFound(w, r)
@@ -70,32 +62,18 @@ func Put(w rest.ResponseWriter, r *rest.Request) {
 		rest.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	lock.Lock()
-	store[key] = &body.Value
-	lock.Unlock()
+	store.Put(key, &body.Value)
 	w.WriteJson(&key)
 }
 
 func Delete(w rest.ResponseWriter, r *rest.Request) {
 	key := r.PathParam("key")
-	lock.Lock()
-	delete(store, key)
-	lock.Unlock()
+	store.Delete(key)
 	w.WriteHeader(http.StatusOK)
 }
 
 func List(w rest.ResponseWriter, r *rest.Request) {
 	prefix := r.PathParam("prefix")
-	list := []string{}
-	lock.Lock()
-	for key, _ := range store {
-		fmt.Printf("%s\n", key)
-		fmt.Printf("%s\n", prefix)
-		if strings.HasPrefix(key, prefix) {
-			list = append(list, key)
-		}
-	}
-	lock.Unlock()
+	list := store.List(prefix)
 	w.WriteJson(list)
 }
-

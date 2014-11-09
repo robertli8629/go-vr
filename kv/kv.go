@@ -1,41 +1,46 @@
 package kv
 
 import (
-	"sync"
 	"strings"
+	"sync"
 )
 
-var store = map[string]*string{}
+type KVStore struct {
+	store map[string]*string
+	lock  *sync.RWMutex
+}
 
-var lock = sync.RWMutex{}
+func NewKVStore() *KVStore {
+	return &KVStore{store: make(map[string]*string), lock: new(sync.RWMutex)}
+}
 
-func Get(key string) (value *string) {
-	lock.RLock()
-	value = store[key]
-	lock.RUnlock()
+func (s *KVStore) Get(key string) (value *string) {
+	s.lock.RLock()
+	value = s.store[key]
+	s.lock.RUnlock()
 	return value
 }
 
-func Put(key string, value string) {
-	lock.Lock()
-	store[key] = &value
-	lock.Unlock()
+func (s *KVStore) Put(key string, value *string) {
+	s.lock.Lock()
+	s.store[key] = value
+	s.lock.Unlock()
 }
 
-func Delete(key string) {
-	lock.Lock()
-	delete(store, key)
-	lock.Unlock()
+func (s *KVStore) Delete(key string) {
+	s.lock.Lock()
+	delete(s.store, key)
+	s.lock.Unlock()
 }
 
-func List(prefix string) (list []string) {
-	list = []string{} 
-	lock.Lock()
-	for key, _ := range store {		
+func (s *KVStore) List(prefix string) (list []string) {
+	list = []string{}
+	s.lock.Lock()
+	for key, _ := range s.store {
 		if strings.HasPrefix(key, prefix) {
 			list = append(list, key)
 		}
 	}
-	lock.Unlock()
+	s.lock.Unlock()
 	return list
 }
