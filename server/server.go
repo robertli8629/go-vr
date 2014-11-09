@@ -73,7 +73,7 @@ func main() {
 	log.Fatal(http.ListenAndServe(portStr, &handler))
 }
 
-var store = kv.NewKVStore()
+var store = kv.NewKVStore([]string{})
 
 func Get(w rest.ResponseWriter, r *rest.Request) {
 	key := r.PathParam("key")
