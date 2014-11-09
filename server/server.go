@@ -8,23 +8,56 @@ import (
 	"strings"
 	"sync"
 	"os"
+	"bufio"
+	"strconv"
 )
 
 type Body struct {
 	Value string
 }
 
+// return a list of port numbers in the config file
+func read_config() (list []string) {
+	file, err := os.Open("config.txt")
+	ret := []string{}
+	
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		ret = append(ret, scanner.Text());
+	}
+
+	if err := scanner.Err(); err != nil {
+		log.Fatal(err)
+	}
+	return ret
+
+}
+
 func main() {
 
 	portStr := ":8080"
+	port := 8080
 	argsWithoutProg := os.Args[1:]
 	argSize := len(argsWithoutProg)
-	fmt.Println(argSize)
+
 	if argSize >= 1 {
-		port := argsWithoutProg[0]
-		portStr = ":" + string(port)
-		fmt.Println(portStr)
+		strport := argsWithoutProg[0]
+		tempPort,err := strconv.Atoi(strport)
+		if err == nil {
+			port = tempPort
+			portStr = ":" + strconv.Itoa(port)
+		}
 	}
+	
+	config := read_config()
+	
+	fmt.Println(config)
+	fmt.Println(port)
 
 	handler := rest.ResourceHandler{
 		EnableRelaxedContentType: true,
