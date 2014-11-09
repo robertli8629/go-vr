@@ -35,7 +35,14 @@ func read_config() (list []string) {
 	if err := scanner.Err(); err != nil {
 		log.Fatal(err)
 	}
-	return ret
+
+	urlList := []string{}
+	for _, element := range ret {
+		url := "http://127.0.0.1:" + element + "/object/"
+		urlList = append(urlList, url)
+	}
+
+	return urlList
 
 }
 
@@ -55,15 +62,17 @@ func main() {
 		}
 	}
 
-	config := read_config()
+	//config := read_config()
 
-	fmt.Println(config)
-	fmt.Println(port)
+	fmt.Println(replicaList)
+	fmt.Println("Port" + portStr)
 
 	//For now, port 8080 is master
 	if portStr == ":8080" {
 		isMaster = true
 		fmt.Println("This is MASTER")
+	} else {
+		fmt.Println("This is REPLICA")
 	}
 
 	handler := rest.ResourceHandler{
@@ -81,25 +90,9 @@ func main() {
 	log.Fatal(http.ListenAndServe(portStr, &handler))
 }
 
-var replicaList = ReadConfig()
+var replicaList = read_config()
 var isMaster = false
 var store = kv.NewKVStore(replicaList)
-
-func ReadConfig() []string {
-
-	//Replace with config file read function in future
-	//Now hard coded with 2 additional replica URL
-	urlList := []string{}
-
-	for i := 0; i < 2; i++ {
-		portnum := 9000 + i*100
-		url := "http://127.0.0.1:" + strconv.Itoa(portnum) + "/object/"
-		fmt.Println(url)
-		urlList = append(urlList, url)
-	}
-
-	return urlList
-}
 
 func Get(w rest.ResponseWriter, r *rest.Request) {
 	key := r.PathParam("key")
