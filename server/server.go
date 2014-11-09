@@ -1,14 +1,16 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
-	"github.com/ant0ine/go-json-rest/rest"
-	"github.com/robertli8629/cs244b_project/kv"
 	"log"
 	"net/http"
 	"os"
-	"bufio"
 	"strconv"
+
+	"github.com/ant0ine/go-json-rest/rest"
+	"github.com/robertli8629/cs244b_project/kv"
 )
 
 type Body struct {
@@ -19,7 +21,7 @@ type Body struct {
 func read_config() (list []string) {
 	file, err := os.Open("config.txt")
 	ret := []string{}
-	
+
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -27,7 +29,7 @@ func read_config() (list []string) {
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
-		ret = append(ret, scanner.Text());
+		ret = append(ret, scanner.Text())
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -46,17 +48,23 @@ func main() {
 
 	if argSize >= 1 {
 		strport := argsWithoutProg[0]
-		tempPort,err := strconv.Atoi(strport)
+		tempPort, err := strconv.Atoi(strport)
 		if err == nil {
 			port = tempPort
 			portStr = ":" + strconv.Itoa(port)
 		}
 	}
-	
+
 	config := read_config()
-	
+
 	fmt.Println(config)
 	fmt.Println(port)
+
+	//For now, port 8080 is master
+	if portStr == ":8080" {
+		isMaster = true
+		fmt.Println("This is MASTER")
+	}
 
 	handler := rest.ResourceHandler{
 		EnableRelaxedContentType: true,
@@ -73,7 +81,25 @@ func main() {
 	log.Fatal(http.ListenAndServe(portStr, &handler))
 }
 
-var store = kv.NewKVStore([]string{})
+var replicaList = ReadConfig()
+var isMaster = false
+var store = kv.NewKVStore(replicaList)
+
+func ReadConfig() []string {
+
+	//Replace with config file read function in future
+	//Now hard coded with 2 additional replica URL
+	urlList := []string{}
+
+	for i := 0; i < 2; i++ {
+		portnum := 9000 + i*100
+		url := "http://127.0.0.1:" + strconv.Itoa(portnum) + "/object/"
+		fmt.Println(url)
+		urlList = append(urlList, url)
+	}
+
+	return urlList
+}
 
 func Get(w rest.ResponseWriter, r *rest.Request) {
 	key := r.PathParam("key")
@@ -97,6 +123,24 @@ func Put(w rest.ResponseWriter, r *rest.Request) {
 	}
 	store.Put(key, &body.Value)
 	w.WriteJson(&key)
+
+	if isMaster == true {
+		//Send to replicas
+		for _, element := range replicaList {
+			url := element + key
+			fmt.Println(url)
+			var json = []byte(`{"value":"value1"}`)
+			req, err := http.NewRequest("PUT", url, bytes.NewBuffer(json))
+			req.Header.Set("Content-Type", "application/json")
+
+			client := &http.Client{}
+			resp, err := client.Do(req)
+			if err != nil {
+				panic(err)
+			}
+			defer resp.Body.Close()
+		}
+	}
 }
 
 func Delete(w rest.ResponseWriter, r *rest.Request) {
