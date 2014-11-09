@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"os"
 )
 
 type Body struct {
@@ -14,6 +15,16 @@ type Body struct {
 }
 
 func main() {
+
+	portStr := ":8080"
+	argsWithoutProg := os.Args[1:]
+	argSize := len(argsWithoutProg)
+	fmt.Println(argSize)
+	if argSize >= 1 {
+		port := argsWithoutProg[0]
+		portStr = ":" + string(port)
+		fmt.Println(portStr)
+	}
 
 	handler := rest.ResourceHandler{
 		EnableRelaxedContentType: true,
@@ -27,7 +38,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Fatal(http.ListenAndServe(":8080", &handler))
+	log.Fatal(http.ListenAndServe(portStr, &handler))
 }
 
 var store = map[string]*string{}
