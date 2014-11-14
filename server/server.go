@@ -1,13 +1,8 @@
-package main
+package server
 
 import (
-	"bufio"
-	"bytes"
-	"fmt"
 	"log"
 	"net/http"
-	"os"
-	"strconv"
 
 	"github.com/ant0ine/go-json-rest/rest"
 	"github.com/robertli8629/cs244b_project/kv"
@@ -17,96 +12,52 @@ type Body struct {
 	Value string
 }
 
-// return a list of port numbers in the config file
-func read_config() (list []string) {
-	file, err := os.Open("config.txt")
-	ret := []string{}
-
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		ret = append(ret, scanner.Text())
-	}
-
-	if err := scanner.Err(); err != nil {
-		log.Fatal(err)
-	}
-
-	urlList := []string{}
-	for _, element := range ret {
-		url := "http://127.0.0.1:" + element + "/object/"
-		urlList = append(urlList, url)
-	}
-
-	return urlList
-
+type Server struct {
+	portStr string
+	store *kv.KVStore
 }
 
-func main() {
 
-	portStr := ":8080"
-	port := 8080
-	argsWithoutProg := os.Args[1:]
-	argSize := len(argsWithoutProg)
+func NewServer(port string, s *kv.KVStore) (server *Server) {
+	portStr := ":" + port
 
-	if argSize >= 1 {
-		strport := argsWithoutProg[0]
-		tempPort, err := strconv.Atoi(strport)
-		if err == nil {
-			port = tempPort
-			portStr = ":" + strconv.Itoa(port)
-		}
-	}
-
-	//config := read_config()
-
-	fmt.Println(replicaList)
-	fmt.Println("Port" + portStr)
-
-	//For now, port 8080 is master
-	if portStr == ":8080" {
-		isMaster = true
-		fmt.Println("This is MASTER")
-	} else {
-		fmt.Println("This is REPLICA")
-	}
+	server = &Server{portStr: portStr, store: s}
 
 	handler := rest.ResourceHandler{
 		EnableRelaxedContentType: true,
 	}
 	err := handler.SetRoutes(
-		&rest.Route{"PUT", "/object/*key", Put},
-		&rest.Route{"GET", "/object/*key", Get},
-		&rest.Route{"DELETE", "/object/*key", Delete},
-		&rest.Route{"GET", "/list/*prefix", List},
+		&rest.Route{"PUT", "/object/*key", server.Put},
+		&rest.Route{"GET", "/object/*key", server.Get},
+		&rest.Route{"DELETE", "/object/*key", server.Delete},
+		&rest.Route{"GET", "/list/*prefix", server.List},
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Fatal(http.ListenAndServe(portStr, &handler))
+
+	log.Println("Listening messenges from clients at", portStr)
+	
+	go func() {
+		log.Fatal(http.ListenAndServe(server.portStr, &handler))
+	}()
+
+	return server
 }
 
-var replicaList = read_config()
-var isMaster = false
-var store = kv.NewKVStore(replicaList)
-
-func Get(w rest.ResponseWriter, r *rest.Request) {
+func (s *Server) Get(w rest.ResponseWriter, r *rest.Request) {
 	key := r.PathParam("key")
 
-	value := store.Get(key)
+	value := s.store.Get(key)
 
 	if value == nil {
 		rest.NotFound(w, r)
 		return
 	}
-	w.WriteJson(value)
+	w.WriteJson(&Body{Value: *value})
 }
 
-func Put(w rest.ResponseWriter, r *rest.Request) {
+func (s *Server) Put(w rest.ResponseWriter, r *rest.Request) {
 	key := r.PathParam("key")
 	body := Body{}
 	err := r.DecodeJsonPayload(&body)
@@ -114,36 +65,24 @@ func Put(w rest.ResponseWriter, r *rest.Request) {
 		rest.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	store.Put(key, &body.Value)
-	w.WriteJson(&key)
-
-	if isMaster == true {
-		//Send to replicas
-		for _, element := range replicaList {
-			url := element + key
-			fmt.Println(url)
-			var json = []byte(`{"value":"value1"}`)
-			req, err := http.NewRequest("PUT", url, bytes.NewBuffer(json))
-			req.Header.Set("Content-Type", "application/json")
-
-			client := &http.Client{}
-			resp, err := client.Do(req)
-			if err != nil {
-				panic(err)
-			}
-			defer resp.Body.Close()
-		}
+	
+	err = s.store.Put(key, &body.Value)
+	if err != nil {
+		rest.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
-}
 
-func Delete(w rest.ResponseWriter, r *rest.Request) {
-	key := r.PathParam("key")
-	store.Delete(key)
 	w.WriteHeader(http.StatusOK)
 }
 
-func List(w rest.ResponseWriter, r *rest.Request) {
+func (s *Server) Delete(w rest.ResponseWriter, r *rest.Request) {
+	key := r.PathParam("key")
+	s.store.Delete(key)
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) List(w rest.ResponseWriter, r *rest.Request) {
 	prefix := r.PathParam("prefix")
-	list := store.List(prefix)
+	list := s.store.List(prefix)
 	w.WriteJson(list)
 }
