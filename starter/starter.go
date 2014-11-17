@@ -10,6 +10,7 @@ import (
 	"github.com/robertli8629/cs244b_project/kv"
 	"github.com/robertli8629/cs244b_project/server"
 	"github.com/robertli8629/cs244b_project/synchronous"
+	"github.com/robertli8629/cs244b_project/logging"
 )
 
 // return a list of port numbers in the config file
@@ -37,7 +38,9 @@ func read_config() (servers []string, peers []string) {
 	return servers, peers
 }
 
+
 func Start() {
+
 	servers, peers := read_config()
 	argsWithoutProg := os.Args[1:]
 	argSize := len(argsWithoutProg)
@@ -52,6 +55,16 @@ func Start() {
 		panic(err)
 	}
 	log.Println("Id:", id)
+
+	// sample to call read and write to log, filename convention "logsX"
+	l := logging.Log{"2","3","23-key-v"}
+	filename := "logs" + idStr
+	logging.Write_to_log(l, filename)
+	ls ,v, o := logging.Read_from_log(filename)
+	log.Println(ls)
+	log.Println(v)
+	log.Println(o)
+	
 
 	serverPort, peerPort := servers[id], peers[id]
 
