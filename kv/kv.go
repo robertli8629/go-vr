@@ -1,43 +1,38 @@
 package kv
 
 import (
+	"encoding/json"
 	"strings"
 	"sync"
 
-	"github.com/robertli8629/cs244b_project/synchronous"
+	"github.com/robertli8629/cs244b_project/vr"
 )
 
 type KVStore struct {
 	store  map[string]*string
 	lock   *sync.RWMutex
-	logger *synchronous.ReplicatedLog
+	requestNumber int64
+	replication *vr.VR
+}
+
+type Entry struct {
+	Op    OpType
+	Key   string
+	Value string
 }
 
 // Enum for operation code
+type OpType int64
 const PUT = 0
 const DELETE = 1
 
-func NewKVStore(logger *synchronous.ReplicatedLog) *KVStore {
-	s := &KVStore{store: make(map[string]*string), lock: new(sync.RWMutex), logger: logger}
-	if !logger.IsMaster {
-		go s.updateFromLog()
-	}
-	return s
+func NewKVStore(replication *vr.VR) *KVStore {
+	return &KVStore{store: make(map[string]*string), lock: new(sync.RWMutex), requestNumber: 0, replication: replication}
 }
 
-func (s *KVStore) updateFromLog() error {
-	for {
-		entry, err := s.logger.Messenger.ReceiveLogEntry()
-		if err != nil {
-			return err
-		}
-		switch entry.Op {
-		case PUT:
-			s.put(entry.Key, &entry.Value)
-		case DELETE:
-			s.delete(entry.Key)
-		}
-	}
+func (s *KVStore) getMessage(op OpType, key string, value string) (msg string) {
+	b, _ := json.Marshal(&Entry{op, key, value})
+	return string(b)
 }
 
 func (s *KVStore) Get(key string) (value *string) {
@@ -48,7 +43,8 @@ func (s *KVStore) Get(key string) (value *string) {
 }
 
 func (s *KVStore) Put(key string, value *string) (err error) {
-	err = synchronous.AddLogEntry(s.logger, &synchronous.Entry{Op: PUT, Key: key, Value: *value})
+	s.requestNumber++
+	err = s.replication.Request(s.getMessage(PUT, key, *value), 0, s.requestNumber)
 	if err == nil {
 		s.put(key, value)
 	}
@@ -62,7 +58,8 @@ func (s *KVStore) put(key string, value *string) {
 }
 
 func (s *KVStore) Delete(key string) (err error) {
-	err = synchronous.AddLogEntry(s.logger, &synchronous.Entry{Op: DELETE, Key: key, Value: ""})
+	s.requestNumber++
+	err = s.replication.Request(s.getMessage(DELETE, key, ""), 0, s.requestNumber)
 	if err == nil {
 		s.delete(key)
 	}

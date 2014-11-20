@@ -22,7 +22,7 @@ type ReplicatedLog struct {
 	IsMaster  bool
 	Messenger Messenger
 	log       []*Entry
-	PeerUris   []string
+	PeerUris  []string
 }
 
 func AddLogEntry(s *ReplicatedLog, entry *Entry) (err error) {

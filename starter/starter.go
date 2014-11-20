@@ -9,8 +9,8 @@ import (
 
 	"github.com/robertli8629/cs244b_project/kv"
 	"github.com/robertli8629/cs244b_project/server"
-	"github.com/robertli8629/cs244b_project/synchronous"
 	"github.com/robertli8629/cs244b_project/logging"
+	"github.com/robertli8629/cs244b_project/vr"
 )
 
 // return a list of port numbers in the config file
@@ -75,7 +75,7 @@ func Start() {
 		log.Println("This is REPLICA")
 	}
 	
-	messenger := synchronous.NewJsonMessenger(peerPort)
+	messenger := vr.NewJsonMessenger(peerPort)
 
 	uri := []string{}
 	for i := 0; i < len(peers); i++ {
@@ -84,7 +84,7 @@ func Start() {
 		}
 	}
 
-	logger := synchronous.ReplicatedLog{IsMaster: isMaster, Messenger: messenger, PeerUris: uri}
+	logger := vr.VR{IsMaster: isMaster, Messenger: messenger, PeerUris: uri}
 	store := kv.NewKVStore(&logger)
 	server.NewServer(serverPort, store)
 

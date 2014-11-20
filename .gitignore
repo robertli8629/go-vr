@@ -1,7 +1,8 @@
-ompiled Object files, Static and Dynamic libs (Shared Objects)
+# Compiled Object files, Static and Dynamic libs (Shared Objects)
 *.o
 *.a
 *.so
+cs244b_probject
 
 # Folders
 _obj
