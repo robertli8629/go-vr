@@ -188,7 +188,7 @@ func (s *JsonMessenger) commitHandler(w rest.ResponseWriter, r *rest.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-//-----------View change functions---------------
+//-----------View change functions---------------_
 
 func (s *JsonMessenger) SendStartViewChange(uri string, from int64, to int64, newView int64) (err error) {
 	return send(uri, StartViewChangeEndpoint, StartViewChangeMessage{from, to, newView})
