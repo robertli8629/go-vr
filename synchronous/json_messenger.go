@@ -37,7 +37,7 @@ func NewJsonMessenger(port string) *JsonMessenger {
 		EnableRelaxedContentType: true,
 	}
 	err := handler.SetRoutes(
-		&rest.Route{"PUT", endpoint, m.ReceiveHandler},	
+		&rest.Route{"PUT", endpoint, m.ReceiveHandler},
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -58,7 +58,7 @@ func (s *JsonMessenger) SendLogEntry(uri string, entry *Entry) error {
 		panic(err)
 	}
 
-	req, err := http.NewRequest("PUT", uri + endpoint, bytes.NewBuffer(b))
+	req, err := http.NewRequest("PUT", uri+endpoint, bytes.NewBuffer(b))
 	if err != nil {
 		panic(err)
 	}

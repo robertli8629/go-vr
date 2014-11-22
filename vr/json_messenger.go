@@ -79,8 +79,7 @@ func (s *JsonMessenger) SendPrepare(uri string, from int64, to int64, message st
 	return send(uri, PrepareEndpoint, PrepareMessage{from, to, message, primaryView, primaryOp, primaryCommit})
 }
 
-func (s *JsonMessenger) SendPrepareOK(uri string, from int64, to int64, backupView int64, backupOp int64,
-	backupReplica int64) (err error) {
+func (s *JsonMessenger) SendPrepareOK(uri string, from int64, to int64, backupView int64, backupOp int64) (err error) {
 	return send(uri, PrepareOKEndpoint, PrepareOKMessage{from, to, backupView, backupOp})
 }
 
@@ -118,6 +117,7 @@ func (s *JsonMessenger) ReceiveCommit() (from int64, to int64, primaryView int64
 }
 
 func (s *JsonMessenger) prepareHandler(w rest.ResponseWriter, r *rest.Request) {
+	log.Println("Peer Request: /prepare")
 	msg := PrepareMessage{}
 	err := r.DecodeJsonPayload(&msg)
 	if err != nil {
@@ -129,6 +129,7 @@ func (s *JsonMessenger) prepareHandler(w rest.ResponseWriter, r *rest.Request) {
 }
 
 func (s *JsonMessenger) prepareOKHandler(w rest.ResponseWriter, r *rest.Request) {
+	log.Println("Peer Request: /prepareok")
 	msg := PrepareOKMessage{}
 	err := r.DecodeJsonPayload(&msg)
 	if err != nil {
@@ -140,6 +141,7 @@ func (s *JsonMessenger) prepareOKHandler(w rest.ResponseWriter, r *rest.Request)
 }
 
 func (s *JsonMessenger) commitHandler(w rest.ResponseWriter, r *rest.Request) {
+	log.Println("Peer Request: /commit")
 	msg := CommitMessage{}
 	err := r.DecodeJsonPayload(&msg)
 	if err != nil {

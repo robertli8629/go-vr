@@ -9,10 +9,10 @@ import (
 )
 
 type KVStore struct {
-	store  map[string]*string
-	lock   *sync.RWMutex
+	store         map[string]*string
+	lock          *sync.RWMutex
 	requestNumber int64
-	replication *vr.VR
+	replication   *vr.VR
 }
 
 type Entry struct {
@@ -23,16 +23,38 @@ type Entry struct {
 
 // Enum for operation code
 type OpType int64
+
 const PUT = 0
 const DELETE = 1
 
 func NewKVStore(replication *vr.VR) *KVStore {
-	return &KVStore{store: make(map[string]*string), lock: new(sync.RWMutex), requestNumber: 0, replication: replication}
+	store := KVStore{store: make(map[string]*string), lock: new(sync.RWMutex), requestNumber: 0, replication: replication}
+	replication.RegisterUpcall(store.processMessage)
+	return &store
 }
 
-func (s *KVStore) getMessage(op OpType, key string, value string) (msg string) {
+func (s *KVStore) generateMessage(op OpType, key string, value string) (msg string) {
 	b, _ := json.Marshal(&Entry{op, key, value})
 	return string(b)
+}
+
+func (s *KVStore) processMessage(msg string) (result string) {
+	var entry Entry
+	err := json.Unmarshal([]byte(msg), &entry)
+	if err != nil {
+		return "Error: " + err.Error()
+	}
+	switch entry.Op {
+	case PUT:
+		s.put(entry.Key, &entry.Value)
+		return "Success"
+	case DELETE:
+		s.delete(entry.Key)
+		return "Success"
+	default:
+		panic(msg)
+		return "Error: unknow message type: " + msg
+	}
 }
 
 func (s *KVStore) Get(key string) (value *string) {
@@ -43,8 +65,10 @@ func (s *KVStore) Get(key string) (value *string) {
 }
 
 func (s *KVStore) Put(key string, value *string) (err error) {
+	s.lock.Lock()
 	s.requestNumber++
-	err = s.replication.Request(s.getMessage(PUT, key, *value), 0, s.requestNumber)
+	err = s.replication.Request(s.generateMessage(PUT, key, *value), 0, s.requestNumber)
+	s.lock.Unlock()
 	if err == nil {
 		s.put(key, value)
 	}
@@ -58,8 +82,10 @@ func (s *KVStore) put(key string, value *string) {
 }
 
 func (s *KVStore) Delete(key string) (err error) {
+	s.lock.Lock()
 	s.requestNumber++
-	err = s.replication.Request(s.getMessage(DELETE, key, ""), 0, s.requestNumber)
+	err = s.replication.Request(s.generateMessage(DELETE, key, ""), 0, s.requestNumber)
+	s.lock.Unlock()
 	if err == nil {
 		s.delete(key)
 	}

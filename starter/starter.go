@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/robertli8629/cs244b_project/kv"
+	//"github.com/robertli8629/cs244b_project/logging"
 	"github.com/robertli8629/cs244b_project/server"
-	"github.com/robertli8629/cs244b_project/logging"
 	"github.com/robertli8629/cs244b_project/vr"
 )
 
@@ -38,7 +38,6 @@ func read_config() (servers []string, peers []string) {
 	return servers, peers
 }
 
-
 func Start() {
 
 	servers, peers := read_config()
@@ -57,36 +56,34 @@ func Start() {
 	log.Println("Id:", id)
 
 	// sample to call read and write to log, filename convention "logsX"
-	l := logging.Log{"2","3","23-key-v"}
-	filename := "logs" + idStr
-	logging.Write_to_log(l, filename)
-	ls ,v, o := logging.Read_from_log(filename)
-	log.Println(ls)
-	log.Println(v)
-	log.Println(o)
-	
+	//l := logging.Log{"2", "3", "23-key-v"}
+	//filename := "logs" + idStr
+	//logging.Write_to_log(l, filename)
+	//ls, v, o := logging.Read_from_log(filename)
+	//log.Println(ls)
+	//log.Println(v)
+	//log.Println(o)
 
 	serverPort, peerPort := servers[id], peers[id]
 
-	isMaster := id == 0
-	if isMaster {
+	isPrimary := id == 0
+	if isPrimary {
 		log.Println("This is MASTER")
 	} else {
 		log.Println("This is REPLICA")
 	}
-	
+
 	messenger := vr.NewJsonMessenger(peerPort)
 
 	uri := []string{}
 	for i := 0; i < len(peers); i++ {
-		if i != id {
-			uri = append(uri, "http://127.0.0.1:" + peers[i])
-		}
+		uri = append(uri, "http://127.0.0.1:"+peers[i])
 	}
 
-	logger := vr.VR{IsMaster: isMaster, Messenger: messenger, PeerUris: uri}
-	store := kv.NewKVStore(&logger)
+	replication := vr.VR{IsPrimary: isPrimary, Messenger: messenger, GroupUris: uri}
+	store := kv.NewKVStore(&replication)
 	server.NewServer(serverPort, store)
 
+	// Do not exit
 	<-make(chan interface{})
 }

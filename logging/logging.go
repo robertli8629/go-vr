@@ -1,9 +1,9 @@
 package logging
 
 import (
-	"os"
 	"bufio"
 	"log"
+	"os"
 	"strings"
 )
 
@@ -26,11 +26,11 @@ func Write_to_log(l Log, filename string) {
 	//filename := "logs";
 	f, err := os.OpenFile(filename, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
 	if err != nil {
-	    panic(err)
+		panic(err)
 	}
 
 	defer f.Close()
-	
+
 	text := ""
 	text = text + l.View_number + " "
 	text = text + l.Op_number + " "
@@ -38,7 +38,7 @@ func Write_to_log(l Log, filename string) {
 	text = text + "\n"
 
 	if _, err = f.WriteString(text); err != nil {
-	        panic(err)
+		panic(err)
 	}
 }
 
@@ -68,5 +68,3 @@ func Read_from_log(filename string) (logs []string, view_number string, op_numbe
 
 	return logs, view_number, op_number
 }
-
-

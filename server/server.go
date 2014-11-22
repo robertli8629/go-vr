@@ -14,9 +14,8 @@ type Body struct {
 
 type Server struct {
 	portStr string
-	store *kv.KVStore
+	store   *kv.KVStore
 }
-
 
 func NewServer(port string, s *kv.KVStore) (server *Server) {
 	portStr := ":" + port
@@ -37,7 +36,7 @@ func NewServer(port string, s *kv.KVStore) (server *Server) {
 	}
 
 	log.Println("Listening messenges from clients at", portStr)
-	
+
 	go func() {
 		log.Fatal(http.ListenAndServe(server.portStr, &handler))
 	}()
@@ -47,13 +46,17 @@ func NewServer(port string, s *kv.KVStore) (server *Server) {
 
 func (s *Server) Get(w rest.ResponseWriter, r *rest.Request) {
 	key := r.PathParam("key")
+    log.Println("Client Request: GET " + key)
 
 	value := s.store.Get(key)
 
 	if value == nil {
 		rest.NotFound(w, r)
+		log.Println("Response: Not Found")
 		return
 	}
+	log.Println("Response: Success. Return " + *value)
+
 	w.WriteJson(&Body{Value: *value})
 }
 
@@ -65,19 +68,24 @@ func (s *Server) Put(w rest.ResponseWriter, r *rest.Request) {
 		rest.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	
+	log.Println("Client Request: PUT " + key + " " + body.Value)
+
 	err = s.store.Put(key, &body.Value)
 	if err != nil {
 		rest.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Println("Response: Error")
 		return
 	}
+	log.Println("Response: Success")
 
 	w.WriteHeader(http.StatusOK)
 }
 
 func (s *Server) Delete(w rest.ResponseWriter, r *rest.Request) {
 	key := r.PathParam("key")
+	log.Println("Client Request: DELETE " + key)
 	s.store.Delete(key)
+	log.Println("Response: Success")
 	w.WriteHeader(http.StatusOK)
 }
 
