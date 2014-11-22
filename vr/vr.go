@@ -2,6 +2,7 @@ package vr
 
 import (
 	"errors"
+	"log"
 )
 
 type Status int64
@@ -39,6 +40,7 @@ func (s *VR) RegisterUpcall(callback func(message string) (result string)) {
 }
 
 func (s *VR) Request(op string, clientId int64, requestId int64) (err error) {
+	log.Println("Starting request to replicate: " + op)
 	if !s.IsPrimary {
 		return errors.New("Error: request can only be sent to the master.")
 	}
@@ -48,15 +50,38 @@ func (s *VR) Request(op string, clientId int64, requestId int64) (err error) {
 			go s.Messenger.SendPrepare(uri, s.Index, int64(i), op, s.ViewNumber, s.OpNumber, s.CommitNumber)
 		}
 	}
+	log.Println("Finished sending Prepare messages")
 
 	for i, uri := range s.GroupUris {
 		if int64(i) != s.Index {
-			err := s.Messenger.SendCommit(uri, s.Index, int64(i), s.ViewNumber, s.CommitNumber)
-			if err != nil {
-				return err
-			}
+			go s.Messenger.SendCommit(uri, s.Index, int64(i), s.ViewNumber, s.CommitNumber)
 		}
 	}
+	log.Println("Finished sending Commit messages")
 
 	return nil
+}
+
+func (s *VR) PrepareListener() {
+	for {
+		from, to, _, _, _, _, err := s.Messenger.ReceivePrepare()
+		if err != nil {
+			panic(err)
+		}
+
+		// log message
+		go s.Messenger.SendPrepareOK(s.GroupUris[from], to, from, s.ViewNumber, s.OpNumber)
+	}
+}
+
+func (s *VR) CommitListener() {
+	for {
+		_, _, _, _, err := s.Messenger.ReceiveCommit()
+		if err != nil {
+			panic(err)
+		}
+
+		// log message
+		//result := s.Upcall(message)
+	}
 }

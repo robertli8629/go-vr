@@ -46,7 +46,7 @@ func NewServer(port string, s *kv.KVStore) (server *Server) {
 
 func (s *Server) Get(w rest.ResponseWriter, r *rest.Request) {
 	key := r.PathParam("key")
-    log.Println("Client Request: GET " + key)
+	log.Println("Client Request: GET " + key)
 
 	value := s.store.Get(key)
 
