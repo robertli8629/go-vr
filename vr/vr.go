@@ -129,10 +129,10 @@ func (s *VR) StartViewChange(newView int64) (err error) {
 	//TODO: Change status
 	if s.Status != 002 && newView > s.ViewNumber {
 		s.Status = 002 // TODO: Change status
+		s.ViewChangeViewNum = newView
 		log.Println("Start view change for new view number", newView)
 		for i, uri := range s.GroupUris {
 			if int64(i) != s.Index {
-				s.ViewChangeViewNum = newView
 				err := s.Messenger.SendStartViewChange(uri, s.Index, int64(i), s.ViewChangeViewNum)
 				if err != nil {
 					return err
@@ -170,11 +170,11 @@ func (s *VR) ReceiveStartViewChange() (err error) {
 }
 
 func (s *VR) CheckStartViewChangeQuorum() (err error) {
-	//If  NumOfStartViewChangeRecv > quorum, call SendDoViewChange()
+	//If NumOfStartViewChangeRecv > quorum, call SendDoViewChange()
 	if s.NumOfStartViewChangeRecv >= s.Quorum && !(s.DoViewChangeSent) {
-		ownLog, _, _ := logging.Read_from_log("") //TODO: get logs
-		i := 2                                    //TODO!
-		uri := "127.0.0.1:8100"                   //TODO: Get the index & IP of the new leader from config
+		ownLog, _, _ := logging.Read_from_log("")          //TODO: get logs
+		i := s.ViewChangeViewNum % int64(len(s.GroupUris)) //New leader index
+		uri := "127.0.0.1:8100"                            //TODO: Get IP of the new leader from config
 
 		err := s.Messenger.SendDoViewChange(uri, s.Index, int64(i), s.ViewChangeViewNum, s.ViewNumber, ownLog, s.OpNumber, s.CommitNumber)
 		if err != nil {
@@ -324,9 +324,9 @@ func (s *VR) ReceiveDoViewChange() (err error) {
 		return err
 	}
 
-	log.Println("Hear doviewchange msg")
+	log.Println("Recv doviewchange msg")
 
-	//Initiate view change - TODO: Change status to viewchange, call startviewchange}
+	//Initiate view change if not in viewchange mode - TODO: Change status
 	if s.Status != 002 && recvNewView > s.ViewNumber {
 		err = s.StartViewChange(recvNewView)
 		if err != nil {
@@ -363,6 +363,7 @@ func (s *VR) StartView() (err error) {
 	s.CommitNumber = s.DoViewChangeStatus.LargestCommitNum
 	//s.Log = s.DoViewChangeStatus.BestLogHeard //TODO: Replace own log with the best heard
 	s.Status = 001 //TODO: Set to normal status
+	//TODO: Set state to indicate itself as master
 
 	//Reset all viewchange states
 	s.ViewChangeViewNum = 0
@@ -401,6 +402,7 @@ func (s *VR) ReceiveStartView() (err error) {
 	s.ViewNumber = recvNewView
 	//s.log = recvLog //TODO:Replace own log with new primary log
 	s.Status = 001 //TODO: Set status to normal
+	//TODO: Set state to indicate itself as replica
 
 	//TODO: Send prepareok for all non-committed operations
 	//TODO: Execute committed operations that have not previously been commited at this node i.e. commit up till recvCommitNum
