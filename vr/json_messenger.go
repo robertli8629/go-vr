@@ -16,6 +16,7 @@ const CommitEndpoint = "/commit"
 const StartViewChangeEndpoint = "/startviewchange"
 const DoViewChangeEndpoint = "/doviewchange"
 const StartViewEndpoint = "/startview"
+const TestViewChangeEndpoint = "/testviewchange"
 
 type PrepareMessage struct {
 	From          int64
@@ -67,6 +68,10 @@ type StartViewMessage struct {
 	CommitNum int64
 }
 
+type TestViewChangeMessage struct {
+	NewView int64
+}
+
 type JsonMessenger struct {
 	prepareMessages         chan *PrepareMessage
 	prepareOKMessages       chan *PrepareOKMessage
@@ -74,6 +79,7 @@ type JsonMessenger struct {
 	startViewChangeMessages chan *StartViewChangeMessage
 	doViewChangeMessages    chan *DoViewChangeMessage
 	startViewMessages       chan *StartViewMessage
+	testViewChangeMessages  chan *TestViewChangeMessage
 }
 
 func NewJsonMessenger(port string) *JsonMessenger {
@@ -84,6 +90,7 @@ func NewJsonMessenger(port string) *JsonMessenger {
 		startViewChangeMessages: make(chan *StartViewChangeMessage),
 		doViewChangeMessages:    make(chan *DoViewChangeMessage),
 		startViewMessages:       make(chan *StartViewMessage),
+		testViewChangeMessages:  make(chan *TestViewChangeMessage),
 	}
 
 	portStr := ":" + port
@@ -98,6 +105,7 @@ func NewJsonMessenger(port string) *JsonMessenger {
 		&rest.Route{"PUT", StartViewChangeEndpoint, m.startViewChangeHandler},
 		&rest.Route{"PUT", DoViewChangeEndpoint, m.doViewChangeHandler},
 		&rest.Route{"PUT", StartViewEndpoint, m.startViewHandler},
+		&rest.Route{"PUT", TestViewChangeEndpoint, m.testViewChangeHandler},
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -266,6 +274,30 @@ func (s *JsonMessenger) startViewHandler(w rest.ResponseWriter, r *rest.Request)
 	}
 	s.startViewMessages <- &msg
 	w.WriteHeader(http.StatusOK)
+}
+
+func (s *JsonMessenger) testViewChangeHandler(w rest.ResponseWriter, r *rest.Request) {
+	msg := TestViewChangeMessage{}
+	err := r.DecodeJsonPayload(&msg)
+	if err != nil {
+		rest.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.testViewChangeMessages <- &msg
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *JsonMessenger) ReceiveTestViewChange() (result bool, err error) {
+	_, ok := <-s.testViewChangeMessages
+	if !ok {
+		err = errors.New("Error: no more incoming entries")
+		result = false
+		return
+	} else {
+		result = true
+		log.Println("Test view change")
+	}
+	return result, err
 }
 
 //-----------End view change functions---------------
