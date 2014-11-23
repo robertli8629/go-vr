@@ -75,13 +75,17 @@ func Start() {
 
 	messenger := vr.NewJsonMessenger(peerPort)
 
-	uri := []string{}
-	for i := 0; i < len(peers); i++ {
-		uri = append(uri, "http://127.0.0.1:"+peers[i])
+	//uri := []string{}
+	ids := []int64{}
+	uris := map[int64]string{}
+	for i := int64(0); i < int64(len(peers)); i++ {
+		//uri = append(uri, "http://127.0.0.1:"+peers[i])
+		ids = append(ids, i)
+		uris[i] = "http://127.0.0.1:" + peers[i]
 	}
 
-	replication := vr.VR{IsPrimary: isPrimary, Messenger: messenger, GroupUris: uri}
-	store := kv.NewKVStore(&replication)
+	replication := vr.NewVR(isPrimary, int64(id), messenger, ids, uris)
+	store := kv.NewKVStore(replication)
 	server.NewServer(serverPort, store)
 
 	// Do not exit

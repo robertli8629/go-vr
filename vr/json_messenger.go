@@ -17,6 +17,8 @@ const CommitEndpoint = "/commit"
 type PrepareMessage struct {
 	from          int64
 	to            int64
+	clientID      int64
+	requestID     int64
 	message       string
 	primaryView   int64
 	primaryOp     int64
@@ -74,9 +76,9 @@ func NewJsonMessenger(port string) *JsonMessenger {
 	return m
 }
 
-func (s *JsonMessenger) SendPrepare(uri string, from int64, to int64, message string, primaryView int64,
-	primaryOp int64, primaryCommit int64) (err error) {
-	return send(uri, PrepareEndpoint, PrepareMessage{from, to, message, primaryView, primaryOp, primaryCommit})
+func (s *JsonMessenger) SendPrepare(uri string, from int64, to int64, clientID int64, requestID int64,
+	message string, primaryView int64, primaryOp int64, primaryCommit int64) (err error) {
+	return send(uri, PrepareEndpoint, PrepareMessage{from, to, clientID, requestID, message, primaryView, primaryOp, primaryCommit})
 }
 
 func (s *JsonMessenger) SendPrepareOK(uri string, from int64, to int64, backupView int64, backupOp int64) (err error) {
@@ -88,14 +90,14 @@ func (s *JsonMessenger) SendCommit(uri string, from int64, to int64, primaryView
 	return send(uri, CommitEndpoint, CommitMessage{from, to, primaryView, primaryCommit})
 }
 
-func (s *JsonMessenger) ReceivePrepare() (from int64, to int64, message string, primaryView int64, primaryOp int64,
-	primaryCommit int64, err error) {
+func (s *JsonMessenger) ReceivePrepare() (from int64, to int64, clientID int64, requestID int64, message string,
+	primaryView int64, primaryOp int64, primaryCommit int64, err error) {
 	msg, ok := <-s.prepareMessages
 	if !ok {
 		err = errors.New("Error: no more incoming entries")
 		return
 	}
-	return msg.from, msg.to, msg.message, msg.primaryView, msg.primaryOp, msg.primaryCommit, err
+	return msg.from, msg.to, msg.clientID, msg.requestID, msg.message, msg.primaryView, msg.primaryOp, msg.primaryCommit, err
 }
 
 func (s *JsonMessenger) ReceivePrepareOK() (from int64, to int64, backupView int64, backupOp int64, err error) {
