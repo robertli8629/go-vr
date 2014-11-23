@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 
@@ -19,53 +18,53 @@ const DoViewChangeEndpoint = "/doviewchange"
 const StartViewEndpoint = "/startview"
 
 type PrepareMessage struct {
-	from          int64
-	to            int64
-	clientID      int64
-	requestID     int64
-	message       string
-	primaryView   int64
-	primaryOp     int64
-	primaryCommit int64
+	From          int64
+	To            int64
+	ClientID      int64
+	RequestID     int64
+	Message       string
+	PrimaryView   int64
+	PrimaryOp     int64
+	PrimaryCommit int64
 }
 
 type PrepareOKMessage struct {
-	from       int64
-	to         int64
-	backupView int64
-	backupOp   int64
+	From       int64
+	To         int64
+	BackupView int64
+	BackupOp   int64
 }
 
 type CommitMessage struct {
-	from          int64
-	to            int64
-	primaryView   int64
-	primaryCommit int64
+	From          int64
+	To            int64
+	PrimaryView   int64
+	PrimaryCommit int64
 }
 
 type StartViewChangeMessage struct {
-	from    int64
-	to      int64
-	newView int64
+	From    int64
+	To      int64
+	NewView int64
 }
 
 type DoViewChangeMessage struct {
-	from      int64
-	to        int64
-	newView   int64
-	oldView   int64
-	log       []string //TODO: Confirm format of log
-	opNum     int64
-	commitNum int64
+	From      int64
+	To        int64
+	NewView   int64
+	OldView   int64
+	Log       []string //TODO: Confirm format of log
+	OpNum     int64
+	CommitNum int64
 }
 
 type StartViewMessage struct {
-	from      int64
-	to        int64
-	newView   int64
-	log       []string //TODO: Confirm format of log
-	opNum     int64
-	commitNum int64
+	From      int64
+	To        int64
+	NewView   int64
+	Log       []string //TODO: Confirm format of log
+	OpNum     int64
+	CommitNum int64
 }
 
 type JsonMessenger struct {
@@ -75,7 +74,6 @@ type JsonMessenger struct {
 	startViewChangeMessages chan *StartViewChangeMessage
 	doViewChangeMessages    chan *DoViewChangeMessage
 	startViewMessages       chan *StartViewMessage
-	ReceiveHandler          func(w rest.ResponseWriter, r *rest.Request)
 }
 
 func NewJsonMessenger(port string) *JsonMessenger {
@@ -135,7 +133,7 @@ func (s *JsonMessenger) ReceivePrepare() (from int64, to int64, clientID int64, 
 		err = errors.New("Error: no more incoming entries")
 		return
 	}
-	return msg.from, msg.to, msg.clientID, msg.requestID, msg.message, msg.primaryView, msg.primaryOp, msg.primaryCommit, err
+	return msg.From, msg.To, msg.ClientID, msg.RequestID, msg.Message, msg.PrimaryView, msg.PrimaryOp, msg.PrimaryCommit, err
 }
 
 func (s *JsonMessenger) ReceivePrepareOK() (from int64, to int64, backupView int64, backupOp int64, err error) {
@@ -144,17 +142,16 @@ func (s *JsonMessenger) ReceivePrepareOK() (from int64, to int64, backupView int
 		err = errors.New("Error: no more incoming entries")
 		return
 	}
-	return msg.from, msg.to, msg.backupView, msg.backupOp, err
+	return msg.From, msg.To, msg.BackupView, msg.BackupOp, err
 }
 
 func (s *JsonMessenger) ReceiveCommit() (from int64, to int64, primaryView int64, primaryCommit int64, err error) {
 	msg, ok := <-s.commitMessages
-	fmt.Printf("ReceiveCommit(): %v, OK = %v\n", msg, ok)
 	if !ok {
 		err = errors.New("Error: no more incoming entries")
 		return
 	}
-	return msg.from, msg.to, msg.primaryView, msg.primaryCommit, err
+	return msg.From, msg.To, msg.PrimaryView, msg.PrimaryCommit, err
 }
 
 func (s *JsonMessenger) prepareHandler(w rest.ResponseWriter, r *rest.Request) {
@@ -183,10 +180,8 @@ func (s *JsonMessenger) prepareOKHandler(w rest.ResponseWriter, r *rest.Request)
 
 func (s *JsonMessenger) commitHandler(w rest.ResponseWriter, r *rest.Request) {
 	log.Println("Peer Request: /commit")
-	fmt.Printf("Req: %v\n", *r)
 	msg := CommitMessage{}
 	err := r.DecodeJsonPayload(&msg)
-	fmt.Printf("msg: %v, err: %v\n", msg, err)
 	if err != nil {
 		rest.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -217,7 +212,7 @@ func (s *JsonMessenger) ReceiveStartViewChange() (from int64, to int64, newView 
 		err = errors.New("Error: no more incoming entries")
 		return
 	}
-	return msg.from, msg.to, msg.newView, err
+	return msg.From, msg.To, msg.NewView, err
 }
 
 func (s *JsonMessenger) ReceiveDoViewChange() (from int64, to int64, newView int64, oldView int64, log []string, opNum int64,
@@ -227,7 +222,7 @@ func (s *JsonMessenger) ReceiveDoViewChange() (from int64, to int64, newView int
 		err = errors.New("Error: no more incoming entries")
 		return
 	}
-	return msg.from, msg.to, msg.newView, msg.oldView, msg.log, msg.opNum, msg.commitNum, err
+	return msg.From, msg.To, msg.NewView, msg.OldView, msg.Log, msg.OpNum, msg.CommitNum, err
 }
 
 func (s *JsonMessenger) ReceiveStartView() (from int64, to int64, newView int64, log []string, opNum int64,
@@ -237,7 +232,7 @@ func (s *JsonMessenger) ReceiveStartView() (from int64, to int64, newView int64,
 		err = errors.New("Error: no more incoming entries")
 		return
 	}
-	return msg.from, msg.to, msg.newView, msg.log, msg.opNum, msg.commitNum, err
+	return msg.From, msg.To, msg.NewView, msg.Log, msg.OpNum, msg.CommitNum, err
 }
 
 func (s *JsonMessenger) startViewChangeHandler(w rest.ResponseWriter, r *rest.Request) {
@@ -285,15 +280,15 @@ func send(uri string, endpoint string, object interface{}) (err error) {
 	if err != nil {
 		return err
 	}
+	log.Printf("Message sent: PUT %v %v\n", uri+endpoint, string(b))
 
 	req.Header.Set("Content-Type", "application/json")
-	fmt.Printf("%v %v\n", uri+endpoint, object)
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if resp != nil {
 		defer resp.Body.Close()
 	}
-	fmt.Printf("%v %v\n", resp, err)
+
 	return err
 }
