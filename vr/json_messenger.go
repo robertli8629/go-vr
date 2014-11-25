@@ -16,6 +16,8 @@ const CommitEndpoint = "/commit"
 const StartViewChangeEndpoint = "/startviewchange"
 const DoViewChangeEndpoint = "/doviewchange"
 const StartViewEndpoint = "/startview"
+const RecoveryEndpoint = "/recovery"
+const RecoveryResponseEndpoint = "/recoveryresponse"
 const TestViewChangeEndpoint = "/testviewchange"
 
 type PrepareMessage struct {
@@ -68,29 +70,50 @@ type StartViewMessage struct {
 	CommitNum int64
 }
 
+type RecoveryMessage struct {
+	From  int64
+	To    int64
+	Nonce int64
+}
+
+type RecoveryResponseMessage struct {
+	From      int64
+	To        int64
+	ViewNum   int64
+	Nonce     int64
+	Log       []string //TODO: Confirm format of log
+	OpNum     int64
+	CommitNum int64
+	IsPrimary bool
+}
+
 type TestViewChangeMessage struct {
 	NewView int64
 }
 
 type JsonMessenger struct {
-	prepareMessages         chan *PrepareMessage
-	prepareOKMessages       chan *PrepareOKMessage
-	commitMessages          chan *CommitMessage
-	startViewChangeMessages chan *StartViewChangeMessage
-	doViewChangeMessages    chan *DoViewChangeMessage
-	startViewMessages       chan *StartViewMessage
-	testViewChangeMessages  chan *TestViewChangeMessage
+	prepareMessages          chan *PrepareMessage
+	prepareOKMessages        chan *PrepareOKMessage
+	commitMessages           chan *CommitMessage
+	startViewChangeMessages  chan *StartViewChangeMessage
+	doViewChangeMessages     chan *DoViewChangeMessage
+	startViewMessages        chan *StartViewMessage
+	recoveryMessages         chan *RecoveryMessage
+	recoveryResponseMessages chan *RecoveryResponseMessage
+	testViewChangeMessages   chan *TestViewChangeMessage
 }
 
 func NewJsonMessenger(port string) *JsonMessenger {
 	m := &JsonMessenger{
-		prepareMessages:         make(chan *PrepareMessage),
-		prepareOKMessages:       make(chan *PrepareOKMessage),
-		commitMessages:          make(chan *CommitMessage),
-		startViewChangeMessages: make(chan *StartViewChangeMessage),
-		doViewChangeMessages:    make(chan *DoViewChangeMessage),
-		startViewMessages:       make(chan *StartViewMessage),
-		testViewChangeMessages:  make(chan *TestViewChangeMessage),
+		prepareMessages:          make(chan *PrepareMessage),
+		prepareOKMessages:        make(chan *PrepareOKMessage),
+		commitMessages:           make(chan *CommitMessage),
+		startViewChangeMessages:  make(chan *StartViewChangeMessage),
+		doViewChangeMessages:     make(chan *DoViewChangeMessage),
+		startViewMessages:        make(chan *StartViewMessage),
+		recoveryMessages:         make(chan *RecoveryMessage),
+		recoveryResponseMessages: make(chan *RecoveryResponseMessage),
+		testViewChangeMessages:   make(chan *TestViewChangeMessage),
 	}
 
 	portStr := ":" + port
@@ -105,6 +128,8 @@ func NewJsonMessenger(port string) *JsonMessenger {
 		&rest.Route{"PUT", StartViewChangeEndpoint, m.startViewChangeHandler},
 		&rest.Route{"PUT", DoViewChangeEndpoint, m.doViewChangeHandler},
 		&rest.Route{"PUT", StartViewEndpoint, m.startViewHandler},
+		&rest.Route{"PUT", RecoveryEndpoint, m.recoveryHandler},
+		&rest.Route{"PUT", RecoveryResponseEndpoint, m.recoveryResponseHandler},
 		&rest.Route{"PUT", TestViewChangeEndpoint, m.testViewChangeHandler},
 	)
 	if err != nil {
@@ -198,20 +223,20 @@ func (s *JsonMessenger) commitHandler(w rest.ResponseWriter, r *rest.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-//-----------View change functions---------------_
+//-----------View change functions---------------
 
 func (s *JsonMessenger) SendStartViewChange(uri string, from int64, to int64, newView int64) (err error) {
 	return send(uri, StartViewChangeEndpoint, StartViewChangeMessage{from, to, newView})
 }
 
-func (s *JsonMessenger) SendDoViewChange(uri string, from int64, to int64, newView int64, oldView int64, log []string, opNum int64,
+func (s *JsonMessenger) SendDoViewChange(uri string, from int64, to int64, newView int64, oldView int64, opLogs []string, opNum int64,
 	commitNum int64) (err error) {
-	return send(uri, DoViewChangeEndpoint, DoViewChangeMessage{from, to, newView, oldView, log, opNum, commitNum})
+	return send(uri, DoViewChangeEndpoint, DoViewChangeMessage{from, to, newView, oldView, opLogs, opNum, commitNum})
 }
 
-func (s *JsonMessenger) SendStartView(uri string, from int64, to int64, newView int64, log []string, opNum int64,
+func (s *JsonMessenger) SendStartView(uri string, from int64, to int64, newView int64, opLogs []string, opNum int64,
 	commitNum int64) (err error) {
-	return send(uri, StartViewEndpoint, StartViewMessage{from, to, newView, log, opNum, commitNum})
+	return send(uri, StartViewEndpoint, StartViewMessage{from, to, newView, opLogs, opNum, commitNum})
 }
 
 func (s *JsonMessenger) ReceiveStartViewChange() (from int64, to int64, newView int64, err error) {
@@ -223,7 +248,7 @@ func (s *JsonMessenger) ReceiveStartViewChange() (from int64, to int64, newView 
 	return msg.From, msg.To, msg.NewView, err
 }
 
-func (s *JsonMessenger) ReceiveDoViewChange() (from int64, to int64, newView int64, oldView int64, log []string, opNum int64,
+func (s *JsonMessenger) ReceiveDoViewChange() (from int64, to int64, newView int64, oldView int64, opLogs []string, opNum int64,
 	commitNum int64, err error) {
 	msg, ok := <-s.doViewChangeMessages
 	if !ok {
@@ -233,7 +258,7 @@ func (s *JsonMessenger) ReceiveDoViewChange() (from int64, to int64, newView int
 	return msg.From, msg.To, msg.NewView, msg.OldView, msg.Log, msg.OpNum, msg.CommitNum, err
 }
 
-func (s *JsonMessenger) ReceiveStartView() (from int64, to int64, newView int64, log []string, opNum int64,
+func (s *JsonMessenger) ReceiveStartView() (from int64, to int64, newView int64, opLogs []string, opNum int64,
 	commitNum int64, err error) {
 	msg, ok := <-s.startViewMessages
 	if !ok {
@@ -301,6 +326,59 @@ func (s *JsonMessenger) ReceiveTestViewChange() (result bool, err error) {
 }
 
 //-----------End view change functions---------------
+
+//-----------Start recovery functions----------------
+func (s *JsonMessenger) recoveryHandler(w rest.ResponseWriter, r *rest.Request) {
+	msg := RecoveryMessage{}
+	err := r.DecodeJsonPayload(&msg)
+	if err != nil {
+		rest.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.recoveryMessages <- &msg
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *JsonMessenger) recoveryResponseHandler(w rest.ResponseWriter, r *rest.Request) {
+	msg := RecoveryResponseMessage{}
+	err := r.DecodeJsonPayload(&msg)
+	if err != nil {
+		rest.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.recoveryResponseMessages <- &msg
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *JsonMessenger) ReceiveRecovery() (from int64, to int64, nonce int64, err error) {
+	msg, ok := <-s.recoveryMessages
+	if !ok {
+		err = errors.New("Error: no more incoming entries")
+		return
+	}
+	return msg.From, msg.To, msg.Nonce, err
+}
+
+func (s *JsonMessenger) ReceiveRecoveryResponse() (from int64, to int64, viewNum int64, nonce int64, opLogs []string, opNum int64,
+	commitNum int64, isPrimary bool, err error) {
+	msg, ok := <-s.recoveryResponseMessages
+	if !ok {
+		err = errors.New("Error: no more incoming entries")
+		return
+	}
+	return msg.From, msg.To, msg.ViewNum, msg.Nonce, msg.Log, msg.OpNum, msg.CommitNum, msg.IsPrimary, err
+}
+
+func (s *JsonMessenger) SendRecovery(uri string, from int64, to int64, nonce int64) (err error) {
+	return send(uri, RecoveryEndpoint, RecoveryMessage{from, to, nonce})
+}
+
+func (s *JsonMessenger) SendRecoveryResponse(uri string, from int64, to int64, viewNum int64, nonce int64, opLogs []string, opNum int64,
+	commitNum int64, isPrimary bool) (err error) {
+	return send(uri, RecoveryResponseEndpoint, RecoveryResponseMessage{from, to, viewNum, nonce, opLogs, opNum, commitNum, isPrimary})
+}
+
+//-----------End recovery functions------------------
 
 func send(uri string, endpoint string, object interface{}) (err error) {
 	b, err := json.Marshal(object)
