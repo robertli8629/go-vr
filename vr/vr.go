@@ -3,6 +3,7 @@ package vr
 import (
 	"errors"
 	"log"
+	"math/rand"
 	"strconv"
 	"sync"
 	"time"
@@ -16,7 +17,7 @@ const STATUS_NORMAL = 100
 const STATUS_VIEWCHANGE = 200
 const STATUS_RECOVERY = 300
 
-const HEARTBEAT_INTERVAL_MS = 10000
+const HEARTBEAT_INTERVAL_MS = 5000
 const VIEWCHANGE_TIMEOUT_MULTIPLE = 2 //Viewchange start in multiple of heartbeat interval
 
 type Messenger interface {
@@ -88,8 +89,10 @@ func NewVR(isPrimary bool, index int64, messenger Messenger, ids []int64, uris m
 	s.Quorum = int64(len(s.GroupIDs)/2 + 1)
 	s.DoViewChangeStatus.BestLogOpNum = -1
 	s.DoViewChangeStatus.LargestCommitNum = -1
-	s.HeartbeatTimer = time.NewTimer(time.Millisecond * HEARTBEAT_INTERVAL_MS * VIEWCHANGE_TIMEOUT_MULTIPLE)
+	rand.Seed(time.Now().UTC().UnixNano() + s.Index)
+	s.HeartbeatTimer = time.NewTimer(s.getTimerInterval())
 	s.lock = &sync.RWMutex{}
+	s.Status = STATUS_NORMAL
 	go s.PrepareListener()
 	go s.PrepareOKListener()
 	go s.CommitListener()
@@ -261,6 +264,13 @@ func (s *VR) CommitBroadcaster() {
 	}
 }
 
+func (s *VR) getTimerInterval() (interval time.Duration) {
+	//Randomize the timeout by adding 0 to 100ms to avoid all replicas timing out at same time
+	randomNum := rand.Int() % 100
+	log.Println("RandomNum = ", randomNum)
+	return ((time.Millisecond * HEARTBEAT_INTERVAL_MS * VIEWCHANGE_TIMEOUT_MULTIPLE) + (time.Millisecond * time.Duration(randomNum)))
+}
+
 func (s *VR) HeartbeatTimeout() {
 	<-(s.HeartbeatTimer).C
 	if !(s.IsPrimary) {
@@ -271,7 +281,10 @@ func (s *VR) HeartbeatTimeout() {
 
 func (s *VR) ResetHeartbeatTimer() {
 	if !(s.IsPrimary) {
-		(s.HeartbeatTimer).Reset(time.Millisecond * HEARTBEAT_INTERVAL_MS * VIEWCHANGE_TIMEOUT_MULTIPLE)
+		ret := (s.HeartbeatTimer).Reset(s.getTimerInterval())
+		if ret == false {
+			log.Println("Timer reset error!!")
+		}
 	}
 }
 
@@ -284,7 +297,7 @@ func (s *VR) ViewChangeTimeout() {
 
 func (s *VR) StartViewChange(newView int64) (err error) {
 	//Initiate view change
-	if s.Status != STATUS_VIEWCHANGE && newView > s.ViewNumber {
+	if s.Status == STATUS_NORMAL && newView > s.ViewNumber {
 		s.lock.Lock()
 		s.Status = STATUS_VIEWCHANGE
 		s.ViewChangeViewNum = newView
@@ -354,7 +367,7 @@ func (s *VR) StartViewChangeListener() {
 		if err != nil {
 			continue
 		}
-		if s.Status != STATUS_VIEWCHANGE && newView > s.ViewNumber {
+		if s.Status == STATUS_NORMAL && newView > s.ViewNumber {
 			log.Println("Hear startviewchange msg for first time")
 			s.lock.Lock()
 			s.NumOfStartViewChangeRecv++
@@ -410,7 +423,7 @@ func (s *VR) DoViewChangeListener() {
 		log.Println("Recv DoViewChange msg")
 
 		//Initiate view change if not in viewchange mode
-		if s.Status != STATUS_VIEWCHANGE && recvNewView > s.ViewNumber {
+		if s.Status == STATUS_NORMAL && recvNewView > s.ViewNumber {
 			err = s.StartViewChange(recvNewView)
 		}
 
@@ -481,7 +494,8 @@ func (s *VR) StartViewListener() {
 		//s.log = recvLog //TODO:Replace own log with new primary log
 		s.Status = STATUS_NORMAL
 		s.IsPrimary = false
-		s.HeartbeatTimer = time.NewTimer(time.Millisecond * HEARTBEAT_INTERVAL_MS * VIEWCHANGE_TIMEOUT_MULTIPLE)
+		s.HeartbeatTimer = time.NewTimer(s.getTimerInterval())
+		go s.HeartbeatTimeout()
 		s.lock.Unlock()
 
 		//TODO: Send prepareok for all non-committed operations
