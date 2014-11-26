@@ -6,9 +6,10 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"fmt"
 
 	"github.com/robertli8629/cs244b_project/kv"
-	//"github.com/robertli8629/cs244b_project/logging"
+	"github.com/robertli8629/cs244b_project/logging"
 	"github.com/robertli8629/cs244b_project/server"
 	"github.com/robertli8629/cs244b_project/vr"
 )
@@ -44,7 +45,9 @@ func Start() {
 	argsWithoutProg := os.Args[1:]
 	argSize := len(argsWithoutProg)
 
-	id := 0
+	var id int
+	var id64 int64
+	id = 0
 	if argSize == 0 {
 		panic("Server index is needed as an argument.")
 	}
@@ -53,17 +56,9 @@ func Start() {
 	if err != nil {
 		panic(err)
 	}
+	id64 = int64(id)
 	log.Println("Id:", id)
-
-	// sample to call read and write to log, filename convention "logsX"
-	//l := logging.Log{"2", "3", "23-key-v"}
-	//filename := "logs" + idStr
-	//logging.Write_to_log(l, filename)
-	//ls, v, o := logging.Read_from_log(filename)
-	//log.Println(ls)
-	//log.Println(v)
-	//log.Println(o)
-
+	
 	serverPort, peerPort := servers[id], peers[id]
 
 	isPrimary := id == 0
@@ -80,9 +75,16 @@ func Start() {
 		uri = append(uri, "http://127.0.0.1:"+peers[i])
 	}
 
-	replication := vr.VR{IsPrimary: isPrimary, Messenger: messenger, GroupUris: uri}
+	filename := fmt.Sprintf("logs%d", id64)
+	log_struct := logging.Log_struct{Filename: filename}
+	replication := vr.VR{IsPrimary: isPrimary, Messenger: messenger, GroupUris: uri, Index: id64, Log_struct: &log_struct}
 	store := kv.NewKVStore(&replication)
 	server.NewServer(serverPort, store)
+	
+	// test log replay
+	//ls, _, _ := logging.Read_from_log(replication.Log_struct.Filename)
+	//store.ReplayLogs(ls)
+	
 
 	// Do not exit
 	<-make(chan interface{})

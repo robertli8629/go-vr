@@ -3,6 +3,8 @@ package vr
 import (
 	"errors"
 	"log"
+	
+	"github.com/robertli8629/cs244b_project/logging"
 )
 
 type Status int64
@@ -33,6 +35,8 @@ type VR struct {
 	Messenger Messenger
 
 	Upcall func(message string) (result string)
+	
+	Log_struct *logging.Log_struct
 }
 
 func (s *VR) RegisterUpcall(callback func(message string) (result string)) {

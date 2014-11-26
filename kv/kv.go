@@ -5,7 +5,9 @@ import (
 	//"log"
 	"strings"
 	"sync"
-
+	"unicode"
+	"strconv"
+	
 	"github.com/robertli8629/cs244b_project/vr"
 )
 
@@ -55,6 +57,38 @@ func (s *KVStore) processMessage(msg string) (result string) {
 	default:
 		panic(msg)
 		return "Error: unknow message type: " + msg
+	}
+}
+
+func (s *KVStore) ReplayLogs(logs []string) {
+			
+	for l := range logs {
+		line := logs[l]
+		f := func(c rune) bool {
+			return !unicode.IsLetter(c) && !unicode.IsNumber(c)
+		}
+		fields := strings.FieldsFunc(line, f)
+
+		op := fields[0]
+		key := fields[1]
+		value := fields[2]
+		opid, err := strconv.Atoi(op)
+		if err != nil {
+			panic(err)
+		}
+
+		//log.Println(opid)
+		//log.Println(key)
+		//log.Println(value)
+		switch opid {
+			case PUT:
+				s.put(key, &value)
+			case DELETE:
+				s.delete(key)
+			default:
+				panic(op)
+				return
+		}
 	}
 }
 

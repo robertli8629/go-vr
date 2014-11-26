@@ -13,9 +13,13 @@ type Log struct {
 	Data        string
 }
 
+type Log_struct struct {
+	Filename    string
+}
+
 /*
 sample for writing and reading from log, filename convention "logsX"
-	l := logging.Log{"2","3","23-key-v", filename}
+	l := logging.Log{"2","3","0-key-v", filename}
 
 	logging.Write_to_log(l, filename)
 	ls ,v, o := logging.Read_from_log()
@@ -55,9 +59,10 @@ func Read_from_log(filename string) (logs []string, view_number string, op_numbe
 	for scanner.Scan() {
 		line := scanner.Text()
 		fields := strings.Fields(line)
-		if len(fields) >= 2 {
+		if len(fields) >= 3 {
 			view_number = fields[0]
 			op_number = fields[1]
+			line = fields[2]
 		}
 		logs = append(logs, line)
 	}
