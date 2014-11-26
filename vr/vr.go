@@ -244,10 +244,11 @@ func (s *VR) updateReceivedPrepareOK(from int64, backupOp int64) {
 	if backupOp > s.CommitNumber+1 {
 		return
 	}
+	//Fixed bug - Use f instead of f + 1 prepareok
 	quorumSize := len(s.GroupIDs)/2 + 1
 	for s.CommitNumber < s.OpNumber {
 		ballot := s.OperationTable[s.CommitNumber+1]
-		if len(ballot) >= quorumSize {
+		if len(ballot) >= (quorumSize - 1) {
 			s.CommitNumber++
 			delete(s.OperationTable, backupOp)
 		} else {
@@ -411,9 +412,9 @@ func (s *VR) ResetViewChangeSates() {
 	s.NumOfStartViewChangeRecv = 0
 	s.NumOfDoViewChangeRecv = 0
 	s.DoViewChangeSent = false
-	s.DoViewChangeStatus.BestLogOpNum = 0
-	s.DoViewChangeStatus.BestLogViewNum = 0
-	s.DoViewChangeStatus.LargestCommitNum = 0
+	s.DoViewChangeStatus.BestLogOpNum = -1
+	s.DoViewChangeStatus.BestLogViewNum = -1
+	s.DoViewChangeStatus.LargestCommitNum = -1
 	s.DoViewChangeStatus.BestLogHeard = nil
 	s.lock.Unlock()
 }
