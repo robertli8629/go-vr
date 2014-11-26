@@ -9,6 +9,7 @@ import (
 	"strconv"
 	
 	"github.com/robertli8629/cs244b_project/vr"
+	"github.com/robertli8629/cs244b_project/logging"
 )
 
 type KVStore struct {
@@ -113,6 +114,12 @@ func (s *KVStore) Put(key string, value *string) (err error) {
 func (s *KVStore) put(key string, value *string) {
 	s.lock.Lock()
 	s.store[key] = value
+	// add to log
+	text := ""
+	text = text + "0-" + key + "-" + *value
+	filename := "logs" + strconv.FormatInt(s.replication.Index, 10)
+	l := logging.Log{strconv.FormatInt(s.replication.ViewNumber, 10),strconv.FormatInt(s.replication.OpNumber, 10),text}
+	logging.Write_to_log(l, filename)
 	s.lock.Unlock()
 }
 
@@ -130,6 +137,12 @@ func (s *KVStore) Delete(key string) (err error) {
 func (s *KVStore) delete(key string) {
 	s.lock.Lock()
 	delete(s.store, key)
+	// add to log
+	text := ""
+	text = text + "1-" + key + "-0" 
+	filename := "logs" + strconv.FormatInt(s.replication.Index, 10)
+	l := logging.Log{strconv.FormatInt(s.replication.ViewNumber, 10),strconv.FormatInt(s.replication.OpNumber, 10),text}
+	logging.Write_to_log(l, filename)
 	s.lock.Unlock()
 }
 

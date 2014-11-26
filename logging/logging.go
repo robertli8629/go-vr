@@ -19,7 +19,7 @@ type Log_struct struct {
 
 /*
 sample for writing and reading from log, filename convention "logsX"
-	l := logging.Log{"2","3","0-key-v", filename}
+	l := logging.Log{"2","3","0-key-v"}
 
 	logging.Write_to_log(l, filename)
 	ls ,v, o := logging.Read_from_log()
