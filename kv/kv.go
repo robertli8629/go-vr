@@ -18,7 +18,7 @@ type KVStore struct {
 	replication   *vr.VR
 }
 
-type Entry struct {
+type Message struct {
 	Op    OpType
 	Key   string
 	Value string
@@ -37,22 +37,22 @@ func NewKVStore(replication *vr.VR) *KVStore {
 }
 
 func (s *KVStore) generateMessage(op OpType, key string, value string) (msg string) {
-	b, _ := json.Marshal(&Entry{op, key, value})
+	b, _ := json.Marshal(&Message{op, key, value})
 	return string(b)
 }
 
 func (s *KVStore) processMessage(msg string) (result string) {
-	var entry Entry
-	err := json.Unmarshal([]byte(msg), &entry)
+	var message Message
+	err := json.Unmarshal([]byte(msg), &message)
 	if err != nil {
 		return "Error: " + err.Error()
 	}
-	switch entry.Op {
+	switch message.Op {
 	case PUT:
-		s.put(entry.Key, &entry.Value)
+		s.put(message.Key, &message.Value)
 		return "Success"
 	case DELETE:
-		s.delete(entry.Key)
+		s.delete(message.Key)
 		return "Success"
 	default:
 		panic(msg)
