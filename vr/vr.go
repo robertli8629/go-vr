@@ -60,6 +60,7 @@ type RecoveryStore struct {
 	PrimaryViewNum       int64
 	PrimaryOpNum         int64
 	PrimaryCommitNum     int64
+	RecoveryRestartTimer *time.Timer
 }
 
 type ClientTableEntry struct {
@@ -89,6 +90,7 @@ type VR struct {
 	DoViewChangeStatus       DoViewChangeStore
 	RecoveryStatus           RecoveryStore
 	HeartbeatTimer           *time.Timer
+	ViewChangeRestartTimer   *time.Timer
 
 	IsPrimary bool
 	Messenger Messenger
@@ -99,7 +101,7 @@ type VR struct {
 
 func NewVR(isPrimary bool, index int64, messenger Messenger, ids []int64, uris map[int64]string) (s *VR) {
 	s = &VR{IsPrimary: isPrimary, Index: index, OpNumber: -1, CommitNumber: -1, Messenger: messenger,
-		GroupIDs: ids, GroupUris: uris, DoViewChangeSent: false}
+		GroupIDs: ids, GroupUris: uris, DoViewChangeSent: false, ViewChangeRestartTimer: nil}
 	s.ClientTable = map[int64]*ClientTableEntry{}
 	s.OperationTable = map[int64]map[int64]bool{}
 	s.Quorum = int64(len(s.GroupIDs)/2 + 1)
@@ -328,19 +330,30 @@ func (s *VR) ResetHeartbeatTimer() {
 	}
 }
 
+func (s *VR) ViewChangeRestartTimeout() {
+	<-(s.ViewChangeRestartTimer).C
+	//To allow view change to make progress in case stuck
+	//Restart view change in next view
+	log.Println("View change restart timeout")
+	s.ViewChangeTimeout()
+}
+
 func (s *VR) ViewChangeTimeout() {
 	s.lock.Lock()
 	s.TriggerViewNum++
 	s.lock.Unlock()
-	s.StartViewChange(s.TriggerViewNum)
+	s.StartViewChange(s.TriggerViewNum, true)
 }
 
-func (s *VR) StartViewChange(newView int64) (err error) {
+func (s *VR) StartViewChange(newView int64, isTimerTriggered bool) (err error) {
 	//Initiate view change
 	if s.Status == STATUS_NORMAL && newView > s.ViewNumber {
 		s.lock.Lock()
 		s.Status = STATUS_VIEWCHANGE
 		s.ViewChangeViewNum = newView
+		s.NumOfStartViewChangeRecv++ //Increment for the one sent to ownself
+		s.ViewChangeRestartTimer = time.NewTimer(s.getTimerInterval())
+		go s.ViewChangeRestartTimeout()
 		s.lock.Unlock()
 		log.Println("Start view change for new view number", newView)
 		for i, uri := range s.GroupUris {
@@ -348,13 +361,19 @@ func (s *VR) StartViewChange(newView int64) (err error) {
 				go s.Messenger.SendStartViewChange(uri, s.Index, int64(i), s.ViewChangeViewNum)
 			}
 		}
-		s.lock.Lock()
-		s.NumOfStartViewChangeRecv++ //Increment for the one sent to ownself
-		s.lock.Unlock()
+
 		s.CheckStartViewChangeQuorum()
 	} else if s.Status == STATUS_VIEWCHANGE && newView > s.ViewChangeViewNum {
 		//Case where a viewchange for an even later view is triggered
-		s.RestartViewChange(newView, true)
+		s.RestartViewChange(newView, isTimerTriggered)
+		if s.ViewChangeRestartTimer != nil {
+			log.Println("Reset viewchange timer")
+			s.ViewChangeRestartTimer.Stop()
+			s.ViewChangeRestartTimer = time.NewTimer(s.getTimerInterval())
+			go s.ViewChangeRestartTimeout()
+		} else {
+			log.Println("Error: No restart view change timer found!")
+		}
 	}
 	return nil
 }
@@ -368,10 +387,7 @@ func (s *VR) RestartViewChange(newView int64, isTimerTriggered bool) (err error)
 	log.Println("Start view change for new view number", newView)
 	for i, uri := range s.GroupUris {
 		if int64(i) != s.Index {
-			err := s.Messenger.SendStartViewChange(uri, s.Index, int64(i), s.ViewChangeViewNum)
-			if err != nil {
-				return err
-			}
+			go s.Messenger.SendStartViewChange(uri, s.Index, int64(i), s.ViewChangeViewNum)
 		}
 	}
 	s.lock.Lock()
@@ -412,15 +428,16 @@ func (s *VR) StartViewChangeListener() {
 			s.lock.Lock()
 			s.NumOfStartViewChangeRecv++
 			s.lock.Unlock()
-			s.StartViewChange(newView)
+			s.StartViewChange(newView, false)
 			s.HeartbeatTimer.Stop()
-		} else if s.Status == STATUS_VIEWCHANGE && (newView == s.ViewChangeViewNum) {
+		} else if (s.Status == STATUS_VIEWCHANGE) && (newView == s.ViewChangeViewNum) {
 			log.Println("Hear startviewchange msg")
 			s.lock.Lock()
 			s.NumOfStartViewChangeRecv++
 			s.lock.Unlock()
+		} else if (s.Status == STATUS_VIEWCHANGE) && (newView > s.ViewChangeViewNum) {
+			s.StartViewChange(newView, false)
 		}
-		//Optional: Else if status = viewchange && new view number > viewchange viewnum, this is an even later view change. Update view, call s.Messenger.SendStartViewChange & reset count.
 
 		err = s.CheckStartViewChangeQuorum()
 	}
@@ -464,7 +481,7 @@ func (s *VR) DoViewChangeListener() {
 
 		//Initiate view change if not in viewchange mode
 		if s.Status == STATUS_NORMAL && recvNewView > s.ViewNumber {
-			err = s.StartViewChange(recvNewView)
+			err = s.StartViewChange(recvNewView, false)
 		}
 
 		//Increment number of DoViewChange msg recvd
@@ -503,10 +520,11 @@ func (s *VR) StartView() (err error) {
 	//s.Log = s.DoViewChangeStatus.BestLogHeard //TODO: Replace own log with the best heard
 	s.Status = STATUS_NORMAL
 	s.IsPrimary = true
+	s.ViewChangeRestartTimer.Stop()
+	s.ViewChangeRestartTimer = nil
 	s.lock.Unlock()
 
 	s.ResetViewChangeSates()
-	//TODO: Restart timer for view change
 
 	filename := "logs" + strconv.FormatInt(s.Index, 10)
 	ownLog, _, _ := logging.Read_from_log(filename) //TODO: get logs
@@ -536,6 +554,8 @@ func (s *VR) StartViewListener() {
 		s.IsPrimary = false
 		s.HeartbeatTimer = time.NewTimer(s.getTimerInterval())
 		go s.HeartbeatTimeout()
+		s.ViewChangeRestartTimer.Stop()
+		s.ViewChangeRestartTimer = nil
 		s.lock.Unlock()
 
 		//TODO: Send prepareok for all non-committed operations
@@ -556,7 +576,7 @@ func (s *VR) TestViewChangeListener() {
 			continue
 		}
 
-		s.ViewChangeTimeout()
+		s.StartRecovery()
 	}
 }
 
@@ -569,8 +589,28 @@ func (s *VR) StartRecovery() {
 	s.Status = STATUS_RECOVERY
 	s.RecoveryStatus.RecoveryNonce = rand.Int63()
 	s.IsPrimary = false //TODO: Check if it is correct to switch to 0 here
+	s.RecoveryStatus.RecoveryRestartTimer = time.NewTimer(s.getTimerInterval())
+	go s.RestartRecovery()
 	s.lock.Unlock()
 	log.Println("Start recovery protocol")
+	for i, uri := range s.GroupUris {
+		if int64(i) != s.Index {
+			go s.Messenger.SendRecovery(uri, s.Index, int64(i), s.RecoveryStatus.RecoveryNonce)
+		}
+	}
+}
+
+func (s *VR) RestartRecovery() {
+	<-(s.RecoveryStatus.RecoveryRestartTimer).C
+	s.ResetRecoveryStatus()
+	s.lock.Lock()
+	s.Status = STATUS_RECOVERY
+	s.RecoveryStatus.RecoveryNonce = rand.Int63()
+	s.IsPrimary = false //TODO: Check if it is correct to switch to 0 here
+	s.RecoveryStatus.RecoveryRestartTimer = time.NewTimer(s.getTimerInterval())
+	go s.RestartRecovery()
+	s.lock.Unlock()
+	log.Println("Restarting recovery protocol")
 	for i, uri := range s.GroupUris {
 		if int64(i) != s.Index {
 			go s.Messenger.SendRecovery(uri, s.Index, int64(i), s.RecoveryStatus.RecoveryNonce)
@@ -636,6 +676,7 @@ func (s *VR) RecoveryResponseListener() {
 						s.Status = STATUS_NORMAL
 						s.lock.Unlock()
 
+						(s.RecoveryStatus.RecoveryRestartTimer).Stop()
 						s.ResetRecoveryStatus()
 						log.Println("Recovery success. Updated to view number ", s.ViewNumber)
 					}
