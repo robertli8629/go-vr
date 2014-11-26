@@ -27,7 +27,7 @@ sample for writing and reading from log, filename convention "logsX"
 
 // write op_number, view_number, op_code, key, value
 func Write_to_log(l Log, filename string) {
-	//filename := "logs";
+
 	f, err := os.OpenFile(filename, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
 	if err != nil {
 		panic(err)
@@ -48,7 +48,7 @@ func Write_to_log(l Log, filename string) {
 
 // return a list of logs, the latest View_number and the latest Op_number
 func Read_from_log(filename string) (logs []string, view_number string, op_number string) {
-	//filename := "logs";
+
 	file, err := os.Open(filename)
 	if err != nil {
 		log.Fatal(err)
@@ -62,7 +62,7 @@ func Read_from_log(filename string) (logs []string, view_number string, op_numbe
 		if len(fields) >= 3 {
 			view_number = fields[0]
 			op_number = fields[1]
-			line = fields[2]
+			//line = fields[2]
 		}
 		logs = append(logs, line)
 	}
@@ -72,4 +72,26 @@ func Read_from_log(filename string) (logs []string, view_number string, op_numbe
 	}
 
 	return logs, view_number, op_number
+}
+
+
+// replace log with string array logs
+func Replace_logs(filename string, logs []string) {
+	
+	f, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0600)
+	if err != nil {
+		panic(err)
+	}
+
+	defer f.Close()
+
+	for l := range logs {
+		line := logs[l]
+		if _, err = f.WriteString(line+"\n"); err != nil {
+			panic(err)
+		}
+	}
+
+	
+	
 }

@@ -92,7 +92,6 @@ func Start() {
 	// test log replay
 	//ls, _, _ := logging.Read_from_log(replication.Log_struct.Filename)
 	//store.ReplayLogs(ls)
-	
 
 	// Do not exit
 	<-make(chan interface{})
