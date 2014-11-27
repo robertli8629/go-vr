@@ -94,8 +94,9 @@ type VR struct {
 	IsPrimary bool
 	Messenger Messenger
 
-	Upcall func(message string) (result string)
-	lock   *sync.RWMutex
+	Upcall          func(message string) (result string)
+	ReplayLogUpcall func(myLog []string)
+	lock            *sync.RWMutex
 
 	//Log_struct *logging.Log_struct
 }
@@ -128,6 +129,10 @@ func NewVR(isPrimary bool, index int64, messenger Messenger, ids []int64, uris m
 
 func (s *VR) RegisterUpcall(callback func(message string) (result string)) {
 	s.Upcall = callback
+}
+
+func (s *VR) RegisterReplayLogUpcall(callback func(mylog []string)) {
+	s.ReplayLogUpcall = callback
 }
 
 func (s *VR) Request(message string, clientID int64, requestID int64) (err error) {
@@ -681,6 +686,8 @@ func (s *VR) RecoveryResponseListener() {
 
 						filename := "logs" + strconv.FormatInt(s.Index, 10)
 						logging.Replace_logs(filename, s.Log)
+						//Replay logs will write into logs. No need to call replace.
+						s.ReplayLogUpcall(s.Log)
 
 						(s.RecoveryStatus.RecoveryRestartTimer).Stop()
 						s.ResetRecoveryStatus()

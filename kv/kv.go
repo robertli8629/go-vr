@@ -2,14 +2,14 @@ package kv
 
 import (
 	"encoding/json"
-	//"log"
+	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode"
-	"strconv"
-	
-	"github.com/robertli8629/cs244b_project/vr"
+
 	"github.com/robertli8629/cs244b_project/logging"
+	"github.com/robertli8629/cs244b_project/vr"
 )
 
 type KVStore struct {
@@ -34,6 +34,7 @@ const DELETE = 1
 func NewKVStore(replication *vr.VR) *KVStore {
 	store := KVStore{store: make(map[string]*string), lock: new(sync.RWMutex), requestNumber: 0, replication: replication}
 	replication.RegisterUpcall(store.processMessage)
+	replication.RegisterReplayLogUpcall(store.ReplayLogs)
 	return &store
 }
 
@@ -62,7 +63,7 @@ func (s *KVStore) processMessage(msg string) (result string) {
 }
 
 func (s *KVStore) ReplayLogs(logs []string) {
-			
+	log.Println("Replaying logs....")
 	for l := range logs {
 		line := logs[l]
 		f := func(c rune) bool {
@@ -82,13 +83,13 @@ func (s *KVStore) ReplayLogs(logs []string) {
 		//log.Println(key)
 		//log.Println(value)
 		switch opid {
-			case PUT:
-				s.put(key, &value)
-			case DELETE:
-				s.delete(key)
-			default:
-				panic(op)
-				return
+		case PUT:
+			s.replayPut(key, &value)
+		case DELETE:
+			s.replayDelete(key)
+		default:
+			panic(op)
+			return
 		}
 	}
 }
@@ -106,18 +107,24 @@ func (s *KVStore) Put(key string, value *string) (err error) {
 	err = s.replication.Request(s.generateMessage(PUT, key, *value), 0, s.requestNumber)
 	s.lock.Unlock()
 	if err == nil {
-		// add to log
-		text := ""
-		text = text + "0-" + key + "-" + *value
-		filename := "logs" + strconv.FormatInt(s.replication.Index, 10)
-		l := logging.Log{strconv.FormatInt(s.replication.ViewNumber, 10),strconv.FormatInt(s.replication.OpNumber, 10),text}
-		logging.Write_to_log(l, filename)
 		s.put(key, value)
 	}
 	return err
 }
 
 func (s *KVStore) put(key string, value *string) {
+	s.lock.Lock()
+	s.store[key] = value
+	// add to log
+	text := ""
+	text = text + "0-" + key + "-" + *value
+	filename := "logs" + strconv.FormatInt(s.replication.Index, 10)
+	l := logging.Log{strconv.FormatInt(s.replication.ViewNumber, 10), strconv.FormatInt(s.replication.OpNumber, 10), text}
+	logging.Write_to_log(l, filename)
+	s.lock.Unlock()
+}
+
+func (s *KVStore) replayPut(key string, value *string) {
 	s.lock.Lock()
 	s.store[key] = value
 	s.lock.Unlock()
@@ -129,18 +136,24 @@ func (s *KVStore) Delete(key string) (err error) {
 	err = s.replication.Request(s.generateMessage(DELETE, key, ""), 0, s.requestNumber)
 	s.lock.Unlock()
 	if err == nil {
-		// add to log
-		text := ""
-		text = text + "1-" + key + "-0" 
-		filename := "logs" + strconv.FormatInt(s.replication.Index, 10)
-		l := logging.Log{strconv.FormatInt(s.replication.ViewNumber, 10),strconv.FormatInt(s.replication.OpNumber, 10),text}
-		logging.Write_to_log(l, filename)
 		s.delete(key)
 	}
 	return err
 }
 
 func (s *KVStore) delete(key string) {
+	s.lock.Lock()
+	delete(s.store, key)
+	// add to log
+	text := ""
+	text = text + "1-" + key + "-0"
+	filename := "logs" + strconv.FormatInt(s.replication.Index, 10)
+	l := logging.Log{strconv.FormatInt(s.replication.ViewNumber, 10), strconv.FormatInt(s.replication.OpNumber, 10), text}
+	logging.Write_to_log(l, filename)
+	s.lock.Unlock()
+}
+
+func (s *KVStore) replayDelete(key string) {
 	s.lock.Lock()
 	delete(s.store, key)
 	s.lock.Unlock()
