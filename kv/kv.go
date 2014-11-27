@@ -70,9 +70,9 @@ func (s *KVStore) ReplayLogs(logs []string) {
 		}
 		fields := strings.FieldsFunc(line, f)
 
-		op := fields[0]
-		key := fields[1]
-		value := fields[2]
+		op := fields[2]
+		key := fields[3]
+		value := fields[4]
 		opid, err := strconv.Atoi(op)
 		if err != nil {
 			panic(err)
