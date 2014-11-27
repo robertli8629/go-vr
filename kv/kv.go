@@ -106,6 +106,12 @@ func (s *KVStore) Put(key string, value *string) (err error) {
 	err = s.replication.Request(s.generateMessage(PUT, key, *value), 0, s.requestNumber)
 	s.lock.Unlock()
 	if err == nil {
+		// add to log
+		text := ""
+		text = text + "0-" + key + "-" + *value
+		filename := "logs" + strconv.FormatInt(s.replication.Index, 10)
+		l := logging.Log{strconv.FormatInt(s.replication.ViewNumber, 10),strconv.FormatInt(s.replication.OpNumber, 10),text}
+		logging.Write_to_log(l, filename)
 		s.put(key, value)
 	}
 	return err
@@ -114,12 +120,6 @@ func (s *KVStore) Put(key string, value *string) (err error) {
 func (s *KVStore) put(key string, value *string) {
 	s.lock.Lock()
 	s.store[key] = value
-	// add to log
-	text := ""
-	text = text + "0-" + key + "-" + *value
-	filename := "logs" + strconv.FormatInt(s.replication.Index, 10)
-	l := logging.Log{strconv.FormatInt(s.replication.ViewNumber, 10),strconv.FormatInt(s.replication.OpNumber, 10),text}
-	logging.Write_to_log(l, filename)
 	s.lock.Unlock()
 }
 
@@ -129,6 +129,12 @@ func (s *KVStore) Delete(key string) (err error) {
 	err = s.replication.Request(s.generateMessage(DELETE, key, ""), 0, s.requestNumber)
 	s.lock.Unlock()
 	if err == nil {
+		// add to log
+		text := ""
+		text = text + "1-" + key + "-0" 
+		filename := "logs" + strconv.FormatInt(s.replication.Index, 10)
+		l := logging.Log{strconv.FormatInt(s.replication.ViewNumber, 10),strconv.FormatInt(s.replication.OpNumber, 10),text}
+		logging.Write_to_log(l, filename)
 		s.delete(key)
 	}
 	return err
@@ -137,12 +143,6 @@ func (s *KVStore) Delete(key string) (err error) {
 func (s *KVStore) delete(key string) {
 	s.lock.Lock()
 	delete(s.store, key)
-	// add to log
-	text := ""
-	text = text + "1-" + key + "-0" 
-	filename := "logs" + strconv.FormatInt(s.replication.Index, 10)
-	l := logging.Log{strconv.FormatInt(s.replication.ViewNumber, 10),strconv.FormatInt(s.replication.OpNumber, 10),text}
-	logging.Write_to_log(l, filename)
 	s.lock.Unlock()
 }
 
