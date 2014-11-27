@@ -49,11 +49,16 @@ func Write_to_log(l Log, filename string) {
 // return a list of logs, the latest View_number and the latest Op_number
 func Read_from_log(filename string) (logs []string, view_number string, op_number string) {
 
+	view_number = "-1"
+	op_number = "-1"
+	
 	file, err := os.Open(filename)
 	if err != nil {
-		log.Fatal(err)
+		return logs, view_number, op_number
 	}
 	defer file.Close()
+	
+	
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
