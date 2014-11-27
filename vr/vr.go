@@ -29,7 +29,6 @@ type Messenger interface {
 		primaryView int64, primaryOp int64, primaryCommit int64, err error)
 	ReceivePrepareOK() (from int64, to int64, backupView int64, backupOp int64, err error)
 	ReceiveCommit() (from int64, to int64, primaryView int64, primaryCommit int64, err error)
-	//TODO: Confirm format of log
 	SendStartViewChange(uri string, from int64, to int64, newView int64) (err error)
 	SendDoViewChange(uri string, from int64, to int64, newView int64, oldView int64, opLogs []string, opNum int64,
 		commitNum int64) (err error)
@@ -109,8 +108,6 @@ func NewVR(isPrimary bool, index int64, messenger Messenger, ids []int64, uris m
 	s.Quorum = int64(len(s.GroupIDs)/2 + 1)
 	s.DoViewChangeStatus = DoViewChangeStore{BestLogOpNum: -1, LargestCommitNum: -1, BestLogViewNum: -1, BestLogHeard: nil}
 	s.RecoveryStatus = RecoveryStore{LargestViewSeen: -1, PrimaryId: -1, PrimaryViewNum: -2, LogRecv: nil, PrimaryOpNum: -1, PrimaryCommitNum: -1}
-	//s.DoViewChangeStatus.BestLogOpNum = -1
-	//s.DoViewChangeStatus.LargestCommitNum = -1
 	rand.Seed(time.Now().UTC().UnixNano() + s.Index)
 	s.HeartbeatTimer = time.NewTimer(s.getTimerInterval())
 	s.lock = &sync.RWMutex{}
@@ -450,9 +447,9 @@ func (s *VR) StartViewChangeListener() {
 func (s *VR) CheckStartViewChangeQuorum() (err error) {
 	if s.NumOfStartViewChangeRecv >= s.Quorum && !(s.DoViewChangeSent) {
 		filename := "logs" + strconv.FormatInt(s.Index, 10)
-		ownLog, _, _ := logging.Read_from_log(filename)    //TODO: get logs
+		ownLog, _, _ := logging.Read_from_log(filename)    //TODO: get logs from file or in memory?
 		i := s.ViewChangeViewNum % int64(len(s.GroupUris)) //New leader index
-		uri := s.GroupUris[i]                              //TODO: Get IP of the new leader from config
+		uri := s.GroupUris[i]
 
 		go s.Messenger.SendDoViewChange(uri, s.Index, int64(i), s.ViewChangeViewNum, s.ViewNumber, ownLog, s.OpNumber, s.CommitNumber)
 
@@ -488,7 +485,6 @@ func (s *VR) DoViewChangeListener() {
 		}
 
 		//Increment number of DoViewChange msg recvd
-		//TODO: change status
 		if s.Status == STATUS_VIEWCHANGE && s.ViewChangeViewNum == recvNewView {
 			s.NumOfDoViewChangeRecv++
 			//Store logs if it is more updated than any logs previously heard
@@ -520,7 +516,7 @@ func (s *VR) StartView() (err error) {
 	s.TriggerViewNum = s.ViewNumber
 	s.OpNumber = s.DoViewChangeStatus.BestLogOpNum
 	s.CommitNumber = s.DoViewChangeStatus.LargestCommitNum
-	s.Log = s.DoViewChangeStatus.BestLogHeard //TODO: Call log to persistently Replace own log with new primary log
+	s.Log = s.DoViewChangeStatus.BestLogHeard
 	s.Status = STATUS_NORMAL
 	s.IsPrimary = true
 	s.ViewChangeRestartTimer.Stop()
@@ -553,7 +549,7 @@ func (s *VR) StartViewListener() {
 		s.OpNumber = recvOpNum
 		s.ViewNumber = recvNewView
 		s.TriggerViewNum = recvNewView
-		s.Log = recvLog //TODO: Call log to persistently Replace own log with new primary log
+		s.Log = recvLog
 		s.Status = STATUS_NORMAL
 		s.IsPrimary = false
 		s.HeartbeatTimer = time.NewTimer(s.getTimerInterval())
@@ -562,12 +558,13 @@ func (s *VR) StartViewListener() {
 		s.ViewChangeRestartTimer = nil
 		s.lock.Unlock()
 
+		filename := "logs" + strconv.FormatInt(s.Index, 10)
+		logging.Replace_logs(filename, s.Log)
+
 		//TODO: Send prepareok for all non-committed operations
 		//TODO: Execute committed operations that have not previously been commited at this node i.e. commit up till recvCommitNum
 		//TODO: Update client table if needed
 
-		filename := "logs" + strconv.FormatInt(s.Index, 10)
-		logging.Replace_logs(filename, s.Log)
 		s.ResetViewChangeSates()
 
 		log.Println("Received start view from new primary - node ", from)
@@ -678,7 +675,7 @@ func (s *VR) RecoveryResponseListener() {
 						s.ViewNumber = s.RecoveryStatus.PrimaryViewNum
 						s.OpNumber = s.RecoveryStatus.PrimaryOpNum
 						s.CommitNumber = s.RecoveryStatus.PrimaryCommitNum
-						s.Log = s.RecoveryStatus.LogRecv //TODO: Call log to persistently Replace own log with new primary log
+						s.Log = s.RecoveryStatus.LogRecv
 						s.Status = STATUS_NORMAL
 						s.lock.Unlock()
 
