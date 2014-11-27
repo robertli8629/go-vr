@@ -9,7 +9,7 @@ import (
 	//"fmt"
 
 	"github.com/robertli8629/cs244b_project/kv"
-	//"github.com/robertli8629/cs244b_project/logging"
+	"github.com/robertli8629/cs244b_project/logging"
 	"github.com/robertli8629/cs244b_project/server"
 	"github.com/robertli8629/cs244b_project/vr"
 )
@@ -66,6 +66,11 @@ func Start() {
 		log.Println("This is MASTER")
 	} else {
 		log.Println("This is REPLICA")
+	}
+	
+	if (argSize >= 2 && argsWithoutProg[1] == "coldstart")  {
+		log.Println("initializing log")
+		logging.Replace_logs("logs" + idStr, make([]string, 0)); 
 	}
 
 	messenger := vr.NewJsonMessenger(peerPort)

@@ -78,6 +78,7 @@ func Read_from_log(filename string) (logs []string, view_number string, op_numbe
 // replace log with string array logs
 func Replace_logs(filename string, logs []string) {
 	
+	os.Remove(filename)
 	f, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0600)
 	if err != nil {
 		panic(err)
