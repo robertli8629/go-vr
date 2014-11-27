@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"sync"
 	"time"
-	
+
 	"github.com/robertli8629/cs244b_project/logging"
 )
 
@@ -79,7 +79,7 @@ type VR struct {
 	CommitNumber   int64
 	ClientTable    map[int64]*ClientTableEntry
 	OperationTable map[int64]map[int64]bool
-	Log            []*string
+	Log            []string
 
 	ViewChangeViewNum        int64
 	TriggerViewNum           int64
@@ -97,7 +97,7 @@ type VR struct {
 
 	Upcall func(message string) (result string)
 	lock   *sync.RWMutex
-	
+
 	//Log_struct *logging.Log_struct
 }
 
@@ -157,7 +157,7 @@ func (s *VR) Request(message string, clientID int64, requestID int64) (err error
 	s.OpNumber++
 	s.ClientTable[clientID] = &ClientTableEntry{RequestID: requestID, Processing: true}
 	s.OperationTable[s.OpNumber] = map[int64]bool{}
-	s.Log = append(s.Log, &message)
+	s.Log = append(s.Log, message)
 
 	for i, uri := range s.GroupUris {
 		if int64(i) != s.Index {
@@ -201,7 +201,7 @@ func (s *VR) PrepareListener() {
 		s.lock.Lock()
 		s.OpNumber++
 		s.ClientTable[clientID] = &ClientTableEntry{RequestID: requestID, Processing: true}
-		s.Log = append(s.Log, &message)
+		s.Log = append(s.Log, message)
 		go s.Messenger.SendPrepareOK(s.GroupUris[from], to, from, s.ViewNumber, s.OpNumber)
 		s.lock.Unlock()
 
@@ -285,7 +285,7 @@ func (s *VR) commitUpTo(primaryCommit int64) {
 	for s.CommitNumber < primaryCommit && s.CommitNumber < s.OpNumber {
 		s.CommitNumber++
 		if s.Upcall != nil {
-			s.Upcall(*s.Log[s.CommitNumber])
+			s.Upcall(s.Log[s.CommitNumber])
 		}
 	}
 	s.lock.Unlock()
@@ -520,7 +520,7 @@ func (s *VR) StartView() (err error) {
 	s.TriggerViewNum = s.ViewNumber
 	s.OpNumber = s.DoViewChangeStatus.BestLogOpNum
 	s.CommitNumber = s.DoViewChangeStatus.LargestCommitNum
-	//s.Log = s.DoViewChangeStatus.BestLogHeard //TODO: Replace own log with the best heard
+	s.Log = s.DoViewChangeStatus.BestLogHeard //TODO: Call log to persistently Replace own log with new primary log
 	s.Status = STATUS_NORMAL
 	s.IsPrimary = true
 	s.ViewChangeRestartTimer.Stop()
@@ -530,10 +530,11 @@ func (s *VR) StartView() (err error) {
 	s.ResetViewChangeSates()
 
 	filename := "logs" + strconv.FormatInt(s.Index, 10)
-	ownLog, _, _ := logging.Read_from_log(filename) //TODO: get logs
+	//ownLog, _, _ := logging.Read_from_log(filename) //TODO: get logs
+	logging.Replace_logs(filename, s.Log)
 	for i, uri := range s.GroupUris {
 		if int64(i) != s.Index {
-			go s.Messenger.SendStartView(uri, s.Index, int64(i), s.ViewNumber, ownLog, s.OpNumber, s.CommitNumber)
+			go s.Messenger.SendStartView(uri, s.Index, int64(i), s.ViewNumber, s.Log, s.OpNumber, s.CommitNumber)
 		}
 	}
 	log.Println("Got quorum for doviewchange msg. Sent startview")
@@ -544,7 +545,7 @@ func (s *VR) StartView() (err error) {
 
 func (s *VR) StartViewListener() {
 	for {
-		from, _, recvNewView, _, recvOpNum, _, err := s.Messenger.ReceiveStartView()
+		from, _, recvNewView, recvLog, recvOpNum, _, err := s.Messenger.ReceiveStartView()
 		if err != nil {
 			continue
 		}
@@ -552,7 +553,7 @@ func (s *VR) StartViewListener() {
 		s.OpNumber = recvOpNum
 		s.ViewNumber = recvNewView
 		s.TriggerViewNum = recvNewView
-		//s.log = recvLog //TODO:Replace own log with new primary log
+		s.Log = recvLog //TODO: Call log to persistently Replace own log with new primary log
 		s.Status = STATUS_NORMAL
 		s.IsPrimary = false
 		s.HeartbeatTimer = time.NewTimer(s.getTimerInterval())
@@ -565,6 +566,8 @@ func (s *VR) StartViewListener() {
 		//TODO: Execute committed operations that have not previously been commited at this node i.e. commit up till recvCommitNum
 		//TODO: Update client table if needed
 
+		filename := "logs" + strconv.FormatInt(s.Index, 10)
+		logging.Replace_logs(filename, s.Log)
 		s.ResetViewChangeSates()
 
 		log.Println("Received start view from new primary - node ", from)
@@ -675,9 +678,12 @@ func (s *VR) RecoveryResponseListener() {
 						s.ViewNumber = s.RecoveryStatus.PrimaryViewNum
 						s.OpNumber = s.RecoveryStatus.PrimaryOpNum
 						s.CommitNumber = s.RecoveryStatus.PrimaryCommitNum
-						//s.Log = s.RecoveryStatus.LogRecv //TODO: Write best log heard
+						s.Log = s.RecoveryStatus.LogRecv //TODO: Call log to persistently Replace own log with new primary log
 						s.Status = STATUS_NORMAL
 						s.lock.Unlock()
+
+						filename := "logs" + strconv.FormatInt(s.Index, 10)
+						logging.Replace_logs(filename, s.Log)
 
 						(s.RecoveryStatus.RecoveryRestartTimer).Stop()
 						s.ResetRecoveryStatus()
