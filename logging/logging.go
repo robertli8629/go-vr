@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -14,7 +15,7 @@ type Log struct {
 }
 
 type Log_struct struct {
-	Filename    string
+	Filename string
 }
 
 /*
@@ -47,20 +48,21 @@ func Write_to_log(l Log, filename string) {
 }
 
 // return a list of logs, the latest View_number and the latest Op_number
-func Read_from_log(filename string) (logs []string, view_number string, op_number string) {
+func Read_from_log(filename string) (logs []string, view_number string, op_number string, commit_number string) {
 
 	view_number = "-1"
 	op_number = "-1"
-	
+	commit_number = "-1"
+
 	file, err := os.Open(filename)
 	if err != nil {
-		return logs, view_number, op_number
+		return logs, view_number, op_number, commit_number
 	}
 	defer file.Close()
-	
-	
 
 	scanner := bufio.NewScanner(file)
+	largestOpNumSeen := -1
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		fields := strings.Fields(line)
@@ -68,6 +70,10 @@ func Read_from_log(filename string) (logs []string, view_number string, op_numbe
 			view_number = fields[0]
 			op_number = fields[1]
 			//line = fields[2]
+			opInt, _ := strconv.Atoi(op_number)
+			if opInt > largestOpNumSeen {
+				largestOpNumSeen = opInt
+			}
 		}
 		logs = append(logs, line)
 	}
@@ -76,13 +82,14 @@ func Read_from_log(filename string) (logs []string, view_number string, op_numbe
 		log.Fatal(err)
 	}
 
-	return logs, view_number, op_number
-}
+	commit_number = strconv.Itoa(largestOpNumSeen)
 
+	return logs, view_number, op_number, commit_number
+}
 
 // replace log with string array logs
 func Replace_logs(filename string, logs []string) {
-	
+
 	os.Remove(filename)
 	f, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0600)
 	if err != nil {
@@ -93,11 +100,9 @@ func Replace_logs(filename string, logs []string) {
 
 	for l := range logs {
 		line := logs[l]
-		if _, err = f.WriteString(line+"\n"); err != nil {
+		if _, err = f.WriteString(line + "\n"); err != nil {
 			panic(err)
 		}
 	}
 
-	
-	
 }

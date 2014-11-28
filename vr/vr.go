@@ -133,6 +133,24 @@ func (s *VR) RegisterUpcall(callback func(message string) (result string)) {
 
 func (s *VR) RegisterReplayLogUpcall(callback func(mylog []string)) {
 	s.ReplayLogUpcall = callback
+	s.CheckIfLogExist()
+}
+
+func (s *VR) CheckIfLogExist() {
+	filename := "logs" + strconv.FormatInt(s.Index, 10)
+	ownLogs, logs_view_num, logs_op_num, logs_commit_num := logging.Read_from_log(filename)
+	commitNumber, _ := strconv.Atoi(logs_commit_num)
+	opNumber, _ := strconv.Atoi(logs_op_num)
+	viewNumber, _ := strconv.Atoi(logs_view_num)
+
+	if (commitNumber != -1) && (opNumber != -1) && (viewNumber != -1) {
+		//If log exists, use it and populate states & KV
+		s.Log = ownLogs
+		s.CommitNumber = int64(commitNumber)
+		s.OpNumber = int64(opNumber)
+		s.ViewNumber = int64(viewNumber)
+		s.ReplayLogUpcall(s.Log)
+	}
 }
 
 func (s *VR) Request(message string, clientID int64, requestID int64) (err error) {
@@ -271,6 +289,10 @@ func (s *VR) CommitListener() {
 		if primaryView > s.ViewNumber {
 			//If this node also thinks it is a prmary, will do recovery
 			//TODO: But if this node is a replica - state transfer or recovery?
+			go s.StartRecovery()
+			continue
+		} else if primaryCommit >= s.CommitNumber+2 {
+			//If fall behind in the same view by more than 2 commit numbers, recover.
 			go s.StartRecovery()
 			continue
 		}
@@ -452,7 +474,7 @@ func (s *VR) StartViewChangeListener() {
 func (s *VR) CheckStartViewChangeQuorum() (err error) {
 	if s.NumOfStartViewChangeRecv >= s.Quorum && !(s.DoViewChangeSent) {
 		filename := "logs" + strconv.FormatInt(s.Index, 10)
-		ownLog, _, _ := logging.Read_from_log(filename)    //TODO: get logs from file or in memory?
+		ownLog, _, _, _ := logging.Read_from_log(filename) //TODO: get logs from file or in memory?
 		i := s.ViewChangeViewNum % int64(len(s.GroupUris)) //New leader index
 		uri := s.GroupUris[i]
 
@@ -531,7 +553,7 @@ func (s *VR) StartView() (err error) {
 	s.ResetViewChangeSates()
 
 	filename := "logs" + strconv.FormatInt(s.Index, 10)
-	//ownLog, _, _ := logging.Read_from_log(filename) //TODO: get logs
+	//ownLog, _, _, _ := logging.Read_from_log(filename) //TODO: get logs
 	logging.Replace_logs(filename, s.Log)
 	for i, uri := range s.GroupUris {
 		if int64(i) != s.Index {
@@ -638,7 +660,7 @@ func (s *VR) RecoveryListener() {
 
 			if s.IsPrimary == true {
 				filename := "logs" + strconv.FormatInt(s.Index, 10)
-				ownLog, _, _ := logging.Read_from_log(filename) //TODO: get logs
+				ownLog, _, _, _ := logging.Read_from_log(filename) //TODO: get logs
 				s.Messenger.SendRecoveryResponse(uri, s.Index, from, s.ViewNumber, nonce, ownLog, s.OpNumber, s.CommitNumber, s.IsPrimary)
 			} else {
 				s.Messenger.SendRecoveryResponse(uri, s.Index, from, s.ViewNumber, nonce, nil, -1, -1, s.IsPrimary)
@@ -686,7 +708,7 @@ func (s *VR) RecoveryResponseListener() {
 
 						filename := "logs" + strconv.FormatInt(s.Index, 10)
 						logging.Replace_logs(filename, s.Log)
-						//Replay logs will write into logs. No need to call replace.
+
 						s.ReplayLogUpcall(s.Log)
 
 						(s.RecoveryStatus.RecoveryRestartTimer).Stop()
