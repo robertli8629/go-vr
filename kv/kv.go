@@ -54,6 +54,7 @@ func (s *KVStore) processMessage(msg string) (result string) {
 		s.put(message.Key, &message.Value)
 		return "Success"
 	case DELETE:
+		log.Println("deleting: " + message.Key)
 		s.delete(message.Key)
 		return "Success"
 	default:
@@ -67,6 +68,9 @@ func (s *KVStore) ReplayLogs(logs []string) {
 	for l := range logs {
 		line := logs[l]
 		f := func(c rune) bool {
+			if (c == '/') {
+				return false
+			}
 			return !unicode.IsLetter(c) && !unicode.IsNumber(c)
 		}
 		fields := strings.FieldsFunc(line, f)

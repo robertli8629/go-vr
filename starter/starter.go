@@ -96,6 +96,7 @@ func Start() {
 	
 	// test log replay
 	//ls, _, _ := logging.Read_from_log(replication.Log_struct.Filename)
+	//ls, _, _ := logging.Read_from_log("logs" + idStr)
 	//store.ReplayLogs(ls)
 
 	// Do not exit
