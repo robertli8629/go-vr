@@ -207,6 +207,8 @@ func (s *VR) PrepareListener() {
 
 		if primaryOp > s.OpNumber+1 {
 			// TODO: State transfer to get missing information
+			go s.StartRecovery()
+			continue
 		}
 
 		// Out-of-order message
