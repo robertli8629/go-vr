@@ -13,6 +13,7 @@ import (
 )
 
 type KVStore struct {
+	id            int64
 	store         map[string]*string
 	lock          *sync.RWMutex
 	requestNumber int64
@@ -31,8 +32,8 @@ type OpType int64
 const PUT = 0
 const DELETE = 1
 
-func NewKVStore(replication *vr.VR) *KVStore {
-	store := KVStore{store: make(map[string]*string), lock: new(sync.RWMutex), requestNumber: 0, replication: replication}
+func NewKVStore(id int64, replication *vr.VR) *KVStore {
+	store := KVStore{id: id, store: make(map[string]*string), lock: new(sync.RWMutex), requestNumber: 0, replication: replication}
 	replication.RegisterUpcall(store.processMessage)
 	replication.RegisterReplayLogUpcall(store.ReplayLogs)
 	return &store
@@ -68,7 +69,7 @@ func (s *KVStore) ReplayLogs(logs []string) {
 	for l := range logs {
 		line := logs[l]
 		f := func(c rune) bool {
-			if (c == '/') {
+			if c == '/' {
 				return false
 			}
 			return !unicode.IsLetter(c) && !unicode.IsNumber(c)
@@ -108,7 +109,7 @@ func (s *KVStore) Get(key string) (value *string) {
 func (s *KVStore) Put(key string, value *string) (err error) {
 	s.lock.Lock()
 	s.requestNumber++
-	err = s.replication.Request(s.generateMessage(PUT, key, *value), 0, s.requestNumber)
+	err = s.replication.Request(s.generateMessage(PUT, key, *value), s.id, s.requestNumber)
 	s.lock.Unlock()
 	if err == nil {
 		s.put(key, value)
@@ -137,7 +138,7 @@ func (s *KVStore) replayPut(key string, value *string) {
 func (s *KVStore) Delete(key string) (err error) {
 	s.lock.Lock()
 	s.requestNumber++
-	err = s.replication.Request(s.generateMessage(DELETE, key, ""), 0, s.requestNumber)
+	err = s.replication.Request(s.generateMessage(DELETE, key, ""), s.id, s.requestNumber)
 	s.lock.Unlock()
 	if err == nil {
 		s.delete(key)

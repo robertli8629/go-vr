@@ -154,7 +154,7 @@ func (s *VR) CheckIfLogExist() {
 }
 
 func (s *VR) Request(message string, clientID int64, requestID int64) (err error) {
-	log.Println("Starting request to replicate: " + message)
+	log.Printf("Starting to replicate requestId=%v, message=%v from clientID=%v\n", requestID, message, clientID)
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
@@ -163,6 +163,7 @@ func (s *VR) Request(message string, clientID int64, requestID int64) (err error
 	}
 
 	if entry := s.ClientTable[clientID]; entry != nil {
+		log.Printf("Previous request from client: %v\n", *entry)
 		if requestID < entry.RequestID {
 			return errors.New("Error: stale request.")
 		} else if requestID == entry.RequestID {

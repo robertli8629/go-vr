@@ -58,7 +58,7 @@ func Start() {
 	}
 	//id64 = int64(id)
 	log.Println("Id:", id)
-	
+
 	serverPort, peerPort := servers[id], peers[id]
 
 	isPrimary := id == 0
@@ -67,10 +67,10 @@ func Start() {
 	} else {
 		log.Println("This is REPLICA")
 	}
-	
-	if (argSize >= 2 && argsWithoutProg[1] == "coldstart")  {
+
+	if argSize >= 2 && argsWithoutProg[1] == "coldstart" {
 		log.Println("initializing log")
-		logging.Replace_logs("logs" + idStr, make([]string, 0)); 
+		logging.Replace_logs("logs"+idStr, make([]string, 0))
 	}
 
 	messenger := vr.NewJsonMessenger(peerPort)
@@ -84,16 +84,16 @@ func Start() {
 		uris[i] = "http://127.0.0.1:" + peers[i]
 	}
 
-
 	//filename := fmt.Sprintf("logs%d", id64)
 	//log_struct := logging.Log_struct{Filename: filename}
 	//replication := vr.VR{IsPrimary: isPrimary, Messenger: messenger, GroupUris: uri, Index: id64, Log_struct: &log_struct}
 	//store := kv.NewKVStore(&replication)
 
+	// Using same id for VR and KV for convenience only
 	replication := vr.NewVR(isPrimary, int64(id), messenger, ids, uris)
-	store := kv.NewKVStore(replication)
+	store := kv.NewKVStore(int64(id), replication)
 	server.NewServer(serverPort, store)
-	
+
 	// test log replay
 	//ls, _, _ := logging.Read_from_log(replication.Log_struct.Filename)
 	//ls, _, _ := logging.Read_from_log("logs" + idStr)
