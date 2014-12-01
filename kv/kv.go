@@ -84,9 +84,6 @@ func (s *KVStore) ReplayLogs(logs []string) {
 			panic(err)
 		}
 
-		//log.Println(opid)
-		//log.Println(key)
-		//log.Println(value)
 		switch opid {
 		case PUT:
 			s.replayPut(key, &value)
@@ -123,9 +120,8 @@ func (s *KVStore) put(key string, value *string) {
 	// add to log
 	text := ""
 	text = text + "0-" + key + "-" + *value
-	filename := "logs" + strconv.FormatInt(s.replication.Index, 10)
 	l := logging.Log{strconv.FormatInt(s.replication.ViewNumber, 10), strconv.FormatInt(s.replication.OpNumber, 10), text}
-	logging.Write_to_log(l, filename)
+	logging.WriteToLog(l, s.replication.LogStruct.Openfile)
 	s.lock.Unlock()
 }
 
@@ -152,9 +148,8 @@ func (s *KVStore) delete(key string) {
 	// add to log
 	text := ""
 	text = text + "1-" + key + "-0"
-	filename := "logs" + strconv.FormatInt(s.replication.Index, 10)
 	l := logging.Log{strconv.FormatInt(s.replication.ViewNumber, 10), strconv.FormatInt(s.replication.OpNumber, 10), text}
-	logging.Write_to_log(l, filename)
+	logging.WriteToLog(l, s.replication.LogStruct.Openfile)
 	s.lock.Unlock()
 }
 

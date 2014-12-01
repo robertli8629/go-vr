@@ -98,12 +98,12 @@ type VR struct {
 	ReplayLogUpcall func(myLog []string)
 	lock            *sync.RWMutex
 
-	//Log_struct *logging.Log_struct
+	LogStruct	  *logging.LogStruct
 }
 
-func NewVR(isPrimary bool, index int64, messenger Messenger, ids []int64, uris map[int64]string) (s *VR) {
+func NewVR(isPrimary bool, index int64, messenger Messenger, ids []int64, uris map[int64]string, logStruct *logging.LogStruct) (s *VR) {
 	s = &VR{IsPrimary: isPrimary, Index: index, OpNumber: -1, CommitNumber: -1, Messenger: messenger,
-		GroupIDs: ids, GroupUris: uris, DoViewChangeSent: false, ViewChangeRestartTimer: nil}
+		GroupIDs: ids, GroupUris: uris, DoViewChangeSent: false, ViewChangeRestartTimer: nil, LogStruct: logStruct}
 	s.ClientTable = map[int64]*ClientTableEntry{}
 	s.OperationTable = map[int64]map[int64]bool{}
 	s.Quorum = int64(len(s.GroupIDs)/2 + 1)
@@ -138,7 +138,7 @@ func (s *VR) RegisterReplayLogUpcall(callback func(mylog []string)) {
 
 func (s *VR) CheckIfLogExist() {
 	filename := "logs" + strconv.FormatInt(s.Index, 10)
-	ownLogs, logs_view_num, logs_op_num, logs_commit_num := logging.Read_from_log(filename)
+	ownLogs, logs_view_num, logs_op_num, logs_commit_num := logging.ReadFromLog(filename)
 	commitNumber, _ := strconv.Atoi(logs_commit_num)
 	opNumber, _ := strconv.Atoi(logs_op_num)
 	viewNumber, _ := strconv.Atoi(logs_view_num)
@@ -477,7 +477,7 @@ func (s *VR) StartViewChangeListener() {
 func (s *VR) CheckStartViewChangeQuorum() (err error) {
 	if s.NumOfStartViewChangeRecv >= s.Quorum && !(s.DoViewChangeSent) {
 		filename := "logs" + strconv.FormatInt(s.Index, 10)
-		ownLog, _, _, _ := logging.Read_from_log(filename) //TODO: get logs from file or in memory?
+		ownLog, _, _, _ := logging.ReadFromLog(filename) //TODO: get logs from file or in memory?
 		i := s.ViewChangeViewNum % int64(len(s.GroupUris)) //New leader index
 		uri := s.GroupUris[i]
 
@@ -556,8 +556,8 @@ func (s *VR) StartView() (err error) {
 	s.ResetViewChangeSates()
 
 	filename := "logs" + strconv.FormatInt(s.Index, 10)
-	//ownLog, _, _, _ := logging.Read_from_log(filename) //TODO: get logs
-	logging.Replace_logs(filename, s.Log)
+	//ownLog, _, _, _ := logging.ReadFromLog(filename) //TODO: get logs
+	logging.ReplaceLogs(filename, s.Log)
 	for i, uri := range s.GroupUris {
 		if int64(i) != s.Index {
 			go s.Messenger.SendStartView(uri, s.Index, int64(i), s.ViewNumber, s.Log, s.OpNumber, s.CommitNumber)
@@ -589,7 +589,7 @@ func (s *VR) StartViewListener() {
 		s.lock.Unlock()
 
 		filename := "logs" + strconv.FormatInt(s.Index, 10)
-		logging.Replace_logs(filename, s.Log)
+		logging.ReplaceLogs(filename, s.Log)
 
 		//TODO: Send prepareok for all non-committed operations
 		//TODO: Execute committed operations that have not previously been commited at this node i.e. commit up till recvCommitNum
@@ -663,7 +663,7 @@ func (s *VR) RecoveryListener() {
 
 			if s.IsPrimary == true {
 				filename := "logs" + strconv.FormatInt(s.Index, 10)
-				ownLog, _, _, _ := logging.Read_from_log(filename) //TODO: get logs
+				ownLog, _, _, _ := logging.ReadFromLog(filename) //TODO: get logs
 				s.Messenger.SendRecoveryResponse(uri, s.Index, from, s.ViewNumber, nonce, ownLog, s.OpNumber, s.CommitNumber, s.IsPrimary)
 			} else {
 				s.Messenger.SendRecoveryResponse(uri, s.Index, from, s.ViewNumber, nonce, nil, -1, -1, s.IsPrimary)
@@ -710,7 +710,7 @@ func (s *VR) RecoveryResponseListener() {
 						s.lock.Unlock()
 
 						filename := "logs" + strconv.FormatInt(s.Index, 10)
-						logging.Replace_logs(filename, s.Log)
+						logging.ReplaceLogs(filename, s.Log)
 
 						s.ReplayLogUpcall(s.Log)
 

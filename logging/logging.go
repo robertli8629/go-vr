@@ -12,10 +12,18 @@ type Log struct {
 	View_number string
 	Op_number   string
 	Data        string
+	//File
+	//lock 
 }
 
-type Log_struct struct {
+type LogStruct struct {
 	Filename string
+	Openfile *os.File
+}
+
+func NewLogStruct(openfile *os.File, filename string) *LogStruct {
+	logStruct := LogStruct{Filename: filename, Openfile: openfile}
+	return &logStruct
 }
 
 /*
@@ -27,14 +35,7 @@ sample for writing and reading from log, filename convention "logsX"
 */
 
 // write op_number, view_number, op_code, key, value
-func Write_to_log(l Log, filename string) {
-
-	f, err := os.OpenFile(filename, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
-	if err != nil {
-		panic(err)
-	}
-
-	defer f.Close()
+func WriteToLog(l Log, f *os.File) {
 
 	text := ""
 	text = text + l.View_number + " "
@@ -42,13 +43,13 @@ func Write_to_log(l Log, filename string) {
 	text = text + l.Data + " "
 	text = text + "\n"
 
-	if _, err = f.WriteString(text); err != nil {
+	if _, err := f.WriteString(text); err != nil {
 		panic(err)
 	}
 }
 
 // return a list of logs, the latest View_number and the latest Op_number
-func Read_from_log(filename string) (logs []string, view_number string, op_number string, commit_number string) {
+func ReadFromLog(filename string) (logs []string, view_number string, op_number string, commit_number string) {
 
 	view_number = "-1"
 	op_number = "-1"
@@ -88,7 +89,7 @@ func Read_from_log(filename string) (logs []string, view_number string, op_numbe
 }
 
 // replace log with string array logs
-func Replace_logs(filename string, logs []string) {
+func ReplaceLogs(filename string, logs []string) {
 
 	os.Remove(filename)
 	f, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE, 0600)

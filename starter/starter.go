@@ -6,7 +6,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	//"fmt"
 
 	"github.com/robertli8629/go-vr/kv"
 	"github.com/robertli8629/go-vr/logging"
@@ -70,7 +69,7 @@ func Start() {
 
 	if argSize >= 2 && argsWithoutProg[1] == "coldstart" {
 		log.Println("initializing log")
-		logging.Replace_logs("logs"+idStr, make([]string, 0))
+		logging.ReplaceLogs("logs"+idStr, make([]string, 0))
 	}
 
 	messenger := vr.NewJsonMessenger(peerPort)
@@ -84,13 +83,15 @@ func Start() {
 		uris[i] = "http://127.0.0.1:" + peers[i]
 	}
 
-	//filename := fmt.Sprintf("logs%d", id64)
-	//log_struct := logging.Log_struct{Filename: filename}
-	//replication := vr.VR{IsPrimary: isPrimary, Messenger: messenger, GroupUris: uri, Index: id64, Log_struct: &log_struct}
-	//store := kv.NewKVStore(&replication)
+	filename := "logs" + idStr
+	f, err := os.OpenFile(filename, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
+	if err != nil {
+		panic(err)
+	}
 
+	logStruct := logging.NewLogStruct(f, filename)
 	// Using same id for VR and KV for convenience only
-	replication := vr.NewVR(isPrimary, int64(id), messenger, ids, uris)
+	replication := vr.NewVR(isPrimary, int64(id), messenger, ids, uris, logStruct)
 	store := kv.NewKVStore(int64(id), replication)
 	server.NewServer(serverPort, store)
 
