@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/robertli8629/cs244b_project/logging"
+	"github.com/robertli8629/go-vr/logging"
 )
 
 type Status int64

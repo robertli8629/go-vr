@@ -8,10 +8,10 @@ import (
 	"strings"
 	//"fmt"
 
-	"github.com/robertli8629/cs244b_project/kv"
-	"github.com/robertli8629/cs244b_project/logging"
-	"github.com/robertli8629/cs244b_project/server"
-	"github.com/robertli8629/cs244b_project/vr"
+	"github.com/robertli8629/go-vr/kv"
+	"github.com/robertli8629/go-vr/logging"
+	"github.com/robertli8629/go-vr/server"
+	"github.com/robertli8629/go-vr/vr"
 )
 
 // return a list of port numbers in the config file

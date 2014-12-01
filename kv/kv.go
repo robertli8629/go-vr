@@ -8,8 +8,8 @@ import (
 	"sync"
 	"unicode"
 
-	"github.com/robertli8629/cs244b_project/logging"
-	"github.com/robertli8629/cs244b_project/vr"
+	"github.com/robertli8629/go-vr/logging"
+	"github.com/robertli8629/go-vr/vr"
 )
 
 type KVStore struct {

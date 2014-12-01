@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/ant0ine/go-json-rest/rest"
-	"github.com/robertli8629/cs244b_project/kv"
+	"github.com/robertli8629/go-vr/kv"
 )
 
 type Body struct {
