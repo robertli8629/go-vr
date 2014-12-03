@@ -121,7 +121,7 @@ func (s *KVStore) put(key string, value *string) {
 	text := ""
 	text = text + "0-" + key + "-" + *value
 	l := logging.Log{strconv.FormatInt(s.replication.ViewNumber, 10), strconv.FormatInt(s.replication.OpNumber, 10), text}
-	logging.WriteToLog(l, s.replication.LogStruct.Openfile)
+	logging.WriteToLog(l, s.replication.LogStruct.Filename)
 	s.lock.Unlock()
 }
 
@@ -149,7 +149,7 @@ func (s *KVStore) delete(key string) {
 	text := ""
 	text = text + "1-" + key + "-0"
 	l := logging.Log{strconv.FormatInt(s.replication.ViewNumber, 10), strconv.FormatInt(s.replication.OpNumber, 10), text}
-	logging.WriteToLog(l, s.replication.LogStruct.Openfile)
+	logging.WriteToLog(l, s.replication.LogStruct.Filename)
 	s.lock.Unlock()
 }
 

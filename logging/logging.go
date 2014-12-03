@@ -35,7 +35,12 @@ sample for writing and reading from log, filename convention "logsX"
 */
 
 // write op_number, view_number, op_code, key, value
-func WriteToLog(l Log, f *os.File) {
+func WriteToLog(l Log, filename string) {
+
+	f, err := os.OpenFile(filename, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
+	if err != nil {
+		panic(err)
+	}
 
 	text := ""
 	text = text + l.View_number + " "
