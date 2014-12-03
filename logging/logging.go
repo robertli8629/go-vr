@@ -13,7 +13,7 @@ type Log struct {
 	Op_number   string
 	Data        string
 	//File
-	//lock 
+	//lock
 }
 
 type LogStruct struct {
@@ -82,6 +82,55 @@ func ReadFromLog(filename string) (logs []string, view_number string, op_number 
 			}
 		}
 		logs = append(logs, line)
+	}
+
+	if err := scanner.Err(); err != nil {
+		log.Fatal(err)
+	}
+
+	commit_number = strconv.Itoa(largestOpNumSeen)
+
+	return logs, view_number, op_number, commit_number
+}
+
+// return a entries that are larger than the last seen View and Op number
+func ReadPartialFromLog(filename string, lastSeenViewNum int64, lastSeenOpNum int64) (logs []string, view_number string, op_number string, commit_number string) {
+
+	view_number = "-1"
+	op_number = "-1"
+	commit_number = "-1"
+	logs = nil
+
+	file, err := os.Open(filename)
+	if err != nil {
+		return logs, view_number, op_number, commit_number
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	largestOpNumSeen := -1
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		fields := strings.Fields(line)
+		if len(fields) >= 3 {
+			view_number = fields[0]
+			op_number = fields[1]
+			//line = fields[2]
+			opInt, _ := strconv.Atoi(op_number)
+			if opInt > largestOpNumSeen {
+				largestOpNumSeen = opInt
+			}
+		}
+		viewInt, _ := strconv.Atoi(view_number)
+		opInt2, _ := strconv.Atoi(op_number)
+		if int64(viewInt) > lastSeenViewNum {
+			//All entries from later views must be returned
+			logs = append(logs, line)
+		} else if (int64(viewInt) == lastSeenViewNum) && (int64(opInt2) > lastSeenOpNum) {
+			//If same view number as last seen, return only entries with larger op numbers
+			logs = append(logs, line)
+		}
 	}
 
 	if err := scanner.Err(); err != nil {

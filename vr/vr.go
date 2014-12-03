@@ -33,12 +33,14 @@ type Messenger interface {
 	SendDoViewChange(uri string, from int64, to int64, newView int64, oldView int64, opLogs []string, opNum int64,
 		commitNum int64) (err error)
 	SendStartView(uri string, from int64, to int64, newView int64, opLogs []string, opNum int64, commitNum int64) (err error)
-	SendRecovery(uri string, from int64, to int64, nonce int64) (err error)
+	SendRecovery(uri string, from int64, to int64, nonce int64, lastViewNum int64, lastOpNum int64) (err error)
+
 	SendRecoveryResponse(uri string, from int64, to int64, viewNum int64, nonce int64, opLogs []string, opNum int64, commitNum int64, isPrimary bool) (err error)
 	ReceiveStartViewChange() (from int64, to int64, newView int64, err error)
 	ReceiveDoViewChange() (from int64, to int64, newView int64, oldView int64, opLogs []string, opNum int64, commitNum int64, err error)
 	ReceiveStartView() (from int64, to int64, newView int64, opLogs []string, opNum int64, commitNum int64, err error)
-	ReceiveRecovery() (from int64, to int64, nonce int64, err error)
+	ReceiveRecovery() (from int64, to int64, nonce int64, lastViewNum int64, lastOpNum int64, err error)
+
 	ReceiveRecoveryResponse() (from int64, to int64, viewNum int64, nonce int64, opLogs []string, opNum int64, commitNum int64, isPrimary bool, err error)
 	ReceiveTestViewChange() (result bool, err error)
 }
@@ -97,7 +99,6 @@ type VR struct {
 	Upcall          func(message string) (result string)
 	ReplayLogUpcall func(myLog []string)
 	lock            *sync.RWMutex
-
 	LogStruct	  *logging.LogStruct
 }
 
@@ -628,7 +629,7 @@ func (s *VR) StartRecovery() {
 	log.Println("Start recovery protocol")
 	for i, uri := range s.GroupUris {
 		if int64(i) != s.Index {
-			go s.Messenger.SendRecovery(uri, s.Index, int64(i), s.RecoveryStatus.RecoveryNonce)
+			go s.Messenger.SendRecovery(uri, s.Index, int64(i), s.RecoveryStatus.RecoveryNonce, s.ViewNumber, s.OpNumber)
 		}
 	}
 }
@@ -646,14 +647,14 @@ func (s *VR) RestartRecovery() {
 	log.Println("Restarting recovery protocol")
 	for i, uri := range s.GroupUris {
 		if int64(i) != s.Index {
-			go s.Messenger.SendRecovery(uri, s.Index, int64(i), s.RecoveryStatus.RecoveryNonce)
+			go s.Messenger.SendRecovery(uri, s.Index, int64(i), s.RecoveryStatus.RecoveryNonce, s.ViewNumber, s.OpNumber)
 		}
 	}
 }
 
 func (s *VR) RecoveryListener() {
 	for {
-		from, _, nonce, err := s.Messenger.ReceiveRecovery()
+		from, _, nonce, lastViewNum, lastOpNum, err := s.Messenger.ReceiveRecovery()
 		if err != nil {
 			continue
 		}
@@ -663,8 +664,13 @@ func (s *VR) RecoveryListener() {
 
 			if s.IsPrimary == true {
 				filename := "logs" + strconv.FormatInt(s.Index, 10)
-				ownLog, _, _, _ := logging.ReadFromLog(filename) //TODO: get logs
-				s.Messenger.SendRecoveryResponse(uri, s.Index, from, s.ViewNumber, nonce, ownLog, s.OpNumber, s.CommitNumber, s.IsPrimary)
+				if lastViewNum == -1 || lastOpNum == -1 {
+					ownLog, _, _, _ := logging.ReadFromLog(filename) //TODO: get logs
+					s.Messenger.SendRecoveryResponse(uri, s.Index, from, s.ViewNumber, nonce, ownLog, s.OpNumber, s.CommitNumber, s.IsPrimary)
+				} else {
+					ownLog, _, _, _ := logging.ReadPartialFromLog(filename, lastViewNum, lastOpNum)
+					s.Messenger.SendRecoveryResponse(uri, s.Index, from, s.ViewNumber, nonce, ownLog, s.OpNumber, s.CommitNumber, s.IsPrimary)
+				}
 			} else {
 				s.Messenger.SendRecoveryResponse(uri, s.Index, from, s.ViewNumber, nonce, nil, -1, -1, s.IsPrimary)
 			}
@@ -702,10 +708,17 @@ func (s *VR) RecoveryResponseListener() {
 				if s.CheckRecoveryResponseQuorum() == true {
 					if s.RecoveryStatus.PrimaryViewNum == s.RecoveryStatus.LargestViewSeen {
 						s.lock.Lock()
+						if s.ViewNumber == -1 || s.CommitNumber == -1 {
+							s.Log = s.RecoveryStatus.LogRecv
+						} else {
+							//Appending to logs
+							s.Log = append(s.Log, s.RecoveryStatus.LogRecv...)
+						}
 						s.ViewNumber = s.RecoveryStatus.PrimaryViewNum
 						s.OpNumber = s.RecoveryStatus.PrimaryOpNum
 						s.CommitNumber = s.RecoveryStatus.PrimaryCommitNum
-						s.Log = s.RecoveryStatus.LogRecv
+
+
 						s.Status = STATUS_NORMAL
 						s.lock.Unlock()
 

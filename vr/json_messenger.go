@@ -71,9 +71,14 @@ type StartViewMessage struct {
 }
 
 type RecoveryMessage struct {
-	From  int64
-	To    int64
-	Nonce int64
+	From        int64
+	To          int64
+	Nonce       int64
+	LastViewNum int64
+	LastOpNum   int64
+
+
+
 }
 
 type RecoveryResponseMessage struct {
@@ -349,14 +354,14 @@ func (s *JsonMessenger) recoveryResponseHandler(w rest.ResponseWriter, r *rest.R
 	s.recoveryResponseMessages <- &msg
 	w.WriteHeader(http.StatusOK)
 }
-
-func (s *JsonMessenger) ReceiveRecovery() (from int64, to int64, nonce int64, err error) {
+func (s *JsonMessenger) ReceiveRecovery() (from int64, to int64, nonce int64, lastViewNum int64, lastOpNum int64, err error) {
 	msg, ok := <-s.recoveryMessages
 	if !ok {
 		err = errors.New("Error: no more incoming entries")
 		return
 	}
-	return msg.From, msg.To, msg.Nonce, err
+	return msg.From, msg.To, msg.Nonce, msg.LastViewNum, msg.LastOpNum, err
+
 }
 
 func (s *JsonMessenger) ReceiveRecoveryResponse() (from int64, to int64, viewNum int64, nonce int64, opLogs []string, opNum int64,
@@ -368,9 +373,8 @@ func (s *JsonMessenger) ReceiveRecoveryResponse() (from int64, to int64, viewNum
 	}
 	return msg.From, msg.To, msg.ViewNum, msg.Nonce, msg.Log, msg.OpNum, msg.CommitNum, msg.IsPrimary, err
 }
-
-func (s *JsonMessenger) SendRecovery(uri string, from int64, to int64, nonce int64) (err error) {
-	return send(uri, RecoveryEndpoint, RecoveryMessage{from, to, nonce})
+func (s *JsonMessenger) SendRecovery(uri string, from int64, to int64, nonce int64, lastViewNum int64, lastOpNum int64) (err error) {
+	return send(uri, RecoveryEndpoint, RecoveryMessage{from, to, nonce, lastViewNum, lastOpNum})
 }
 
 func (s *JsonMessenger) SendRecoveryResponse(uri string, from int64, to int64, viewNum int64, nonce int64, opLogs []string, opNum int64,
