@@ -76,9 +76,6 @@ type RecoveryMessage struct {
 	Nonce       int64
 	LastViewNum int64
 	LastOpNum   int64
-
-
-
 }
 
 type RecoveryResponseMessage struct {

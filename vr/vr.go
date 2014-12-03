@@ -45,6 +45,18 @@ type Messenger interface {
 	ReceiveTestViewChange() (result bool, err error)
 }
 
+type Operation struct {
+	ClientID  int64
+	RequestID int64
+	Message   *string
+}
+
+type ClientTableEntry struct {
+	Op         *Operation
+	Processing bool
+	Response   error
+}
+
 type DoViewChangeStore struct {
 	LargestCommitNum int64
 	BestLogHeard     []string
@@ -64,30 +76,24 @@ type RecoveryStore struct {
 	RecoveryRestartTimer *time.Timer
 }
 
-type ClientTableEntry struct {
-	RequestID  int64
-	Processing bool
-	Response   error
-}
-
 type VR struct {
-	GroupIDs       []int64
-	GroupUris      map[int64]string
-	Index          int64
-	ViewNumber     int64
-	Status         Status
-	OpNumber       int64
-	CommitNumber   int64
-	ClientTable    map[int64]*ClientTableEntry
-	OperationTable map[int64]map[int64]bool
-	Log            []string
+	GroupIDs           []int64
+	GroupUris          map[int64]string
+	QuorumSize         int64
+	Index              int64
+	ViewNumber         int64
+	Status             Status
+	OpNumber           int64
+	CommitNumber       int64
+	ClientTable        map[int64]*ClientTableEntry
+	PrepareBallotTable map[int64]map[int64]bool
+	Log                []string
 
 	ViewChangeViewNum        int64
 	TriggerViewNum           int64
 	NumOfStartViewChangeRecv int64
 	NumOfDoViewChangeRecv    int64
 	DoViewChangeSent         bool
-	Quorum                   int64
 	DoViewChangeStatus       DoViewChangeStore
 	RecoveryStatus           RecoveryStore
 	HeartbeatTimer           *time.Timer
@@ -106,8 +112,8 @@ func NewVR(isPrimary bool, index int64, messenger Messenger, ids []int64, uris m
 	s = &VR{IsPrimary: isPrimary, Index: index, OpNumber: -1, CommitNumber: -1, Messenger: messenger,
 		GroupIDs: ids, GroupUris: uris, DoViewChangeSent: false, ViewChangeRestartTimer: nil, LogStruct: logStruct}
 	s.ClientTable = map[int64]*ClientTableEntry{}
-	s.OperationTable = map[int64]map[int64]bool{}
-	s.Quorum = int64(len(s.GroupIDs)/2 + 1)
+	s.PrepareBallotTable = map[int64]map[int64]bool{}
+	s.QuorumSize = int64(len(s.GroupIDs)/2 + 1)
 	s.DoViewChangeStatus = DoViewChangeStore{BestLogOpNum: -1, LargestCommitNum: -1, BestLogViewNum: -1, BestLogHeard: nil}
 	s.RecoveryStatus = RecoveryStore{LargestViewSeen: -1, PrimaryId: -1, PrimaryViewNum: -2, LogRecv: nil, PrimaryOpNum: -1, PrimaryCommitNum: -1}
 	rand.Seed(time.Now().UTC().UnixNano() + s.Index)
@@ -154,7 +160,7 @@ func (s *VR) CheckIfLogExist() {
 	}
 }
 
-func (s *VR) Request(message string, clientID int64, requestID int64) (err error) {
+func (s *VR) RequestAsync(clientID int64, requestID int64, message string) (err error) {
 	log.Printf("Starting to replicate requestId=%v, message=%v from clientID=%v\n", requestID, message, clientID)
 	s.lock.Lock()
 	defer s.lock.Unlock()
@@ -165,9 +171,9 @@ func (s *VR) Request(message string, clientID int64, requestID int64) (err error
 
 	if entry := s.ClientTable[clientID]; entry != nil {
 		log.Printf("Previous request from client: %v\n", *entry)
-		if requestID < entry.RequestID {
+		if requestID < entry.Op.RequestID {
 			return errors.New("Error: stale request.")
-		} else if requestID == entry.RequestID {
+		} else if requestID == entry.Op.RequestID {
 			if entry.Processing {
 				return errors.New("Error: still processing request.")
 			} else {
@@ -176,9 +182,10 @@ func (s *VR) Request(message string, clientID int64, requestID int64) (err error
 		}
 	}
 
+	op := Operation{ClientID: clientID, RequestID: requestID, Message: &message}
 	s.OpNumber++
-	s.ClientTable[clientID] = &ClientTableEntry{RequestID: requestID, Processing: true}
-	s.OperationTable[s.OpNumber] = map[int64]bool{}
+	s.ClientTable[clientID] = &ClientTableEntry{Op: &op, Processing: true}
+	s.PrepareBallotTable[s.OpNumber] = map[int64]bool{}
 	s.Log = append(s.Log, message)
 
 	for i, uri := range s.GroupUris {
@@ -191,6 +198,7 @@ func (s *VR) Request(message string, clientID int64, requestID int64) (err error
 
 	return nil
 }
+
 func (s *VR) PrepareListener() {
 	for {
 		from, to, clientID, requestID, message, primaryView, primaryOp,
@@ -222,9 +230,10 @@ func (s *VR) PrepareListener() {
 
 		s.commitUpTo(primaryCommit)
 
+		op := Operation{ClientID: clientID, RequestID: requestID, Message: &message}
 		s.lock.Lock()
 		s.OpNumber++
-		s.ClientTable[clientID] = &ClientTableEntry{RequestID: requestID, Processing: true}
+		s.ClientTable[clientID] = &ClientTableEntry{Op: &op, Processing: true}
 		s.Log = append(s.Log, message)
 		go s.Messenger.SendPrepareOK(s.GroupUris[from], to, from, s.ViewNumber, s.OpNumber)
 		s.lock.Unlock()
@@ -255,7 +264,7 @@ func (s *VR) updateReceivedPrepareOK(from int64, backupOp int64) {
 	}
 
 	// Update table for PrepareOK messages
-	ballot, found := s.OperationTable[backupOp]
+	ballot, found := s.PrepareBallotTable[backupOp]
 	if !found {
 		return
 	}
@@ -268,13 +277,12 @@ func (s *VR) updateReceivedPrepareOK(from int64, backupOp int64) {
 	if backupOp > s.CommitNumber+1 {
 		return
 	}
-	//Fixed bug - Use f instead of f + 1 prepareok
-	quorumSize := len(s.GroupIDs)/2 + 1
+
 	for s.CommitNumber < s.OpNumber {
-		ballot := s.OperationTable[s.CommitNumber+1]
-		if len(ballot) >= (quorumSize - 1) {
+		ballot := s.PrepareBallotTable[s.CommitNumber+1]
+		if int64(len(ballot)) >= (s.QuorumSize - 1) {
 			s.CommitNumber++
-			delete(s.OperationTable, backupOp)
+			delete(s.PrepareBallotTable, backupOp)
 		} else {
 			break
 		}
@@ -312,9 +320,7 @@ func (s *VR) commitUpTo(primaryCommit int64) {
 	s.lock.Lock()
 	for s.CommitNumber < primaryCommit && s.CommitNumber < s.OpNumber {
 		s.CommitNumber++
-		if s.Upcall != nil {
-			s.Upcall(s.Log[s.CommitNumber])
-		}
+		s.Upcall(s.Log[s.CommitNumber])
 	}
 	s.lock.Unlock()
 }
@@ -476,7 +482,7 @@ func (s *VR) StartViewChangeListener() {
 }
 
 func (s *VR) CheckStartViewChangeQuorum() (err error) {
-	if s.NumOfStartViewChangeRecv >= s.Quorum && !(s.DoViewChangeSent) {
+	if s.NumOfStartViewChangeRecv >= s.QuorumSize && !(s.DoViewChangeSent) {
 		filename := "logs" + strconv.FormatInt(s.Index, 10)
 		ownLog, _, _, _ := logging.ReadFromLog(filename)   //TODO: get logs from file or in memory?
 		i := s.ViewChangeViewNum % int64(len(s.GroupUris)) //New leader index
@@ -493,7 +499,7 @@ func (s *VR) CheckStartViewChangeQuorum() (err error) {
 }
 
 func (s *VR) CheckDoViewChangeQuorum() (err error) {
-	if s.NumOfDoViewChangeRecv >= s.Quorum {
+	if s.NumOfDoViewChangeRecv >= s.QuorumSize {
 		err := s.StartView()
 		if err != nil {
 			return err
@@ -743,7 +749,7 @@ func (s *VR) RecoveryResponseListener() {
 }
 
 func (s *VR) CheckRecoveryResponseQuorum() (success bool) {
-	if s.RecoveryStatus.NumOfRecoveryRspRecv >= s.Quorum {
+	if s.RecoveryStatus.NumOfRecoveryRspRecv >= s.QuorumSize {
 		return true
 	}
 	return false

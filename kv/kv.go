@@ -106,7 +106,7 @@ func (s *KVStore) Get(key string) (value *string) {
 func (s *KVStore) Put(key string, value *string) (err error) {
 	s.lock.Lock()
 	s.requestNumber++
-	err = s.replication.Request(s.generateMessage(PUT, key, *value), s.id, s.requestNumber)
+	err = s.replication.RequestAsync(s.id, s.requestNumber, s.generateMessage(PUT, key, *value))
 	s.lock.Unlock()
 	if err == nil {
 		s.put(key, value)
@@ -134,7 +134,7 @@ func (s *KVStore) replayPut(key string, value *string) {
 func (s *KVStore) Delete(key string) (err error) {
 	s.lock.Lock()
 	s.requestNumber++
-	err = s.replication.Request(s.generateMessage(DELETE, key, ""), s.id, s.requestNumber)
+	err = s.replication.RequestAsync(s.id, s.requestNumber, s.generateMessage(DELETE, key, ""))
 	s.lock.Unlock()
 	if err == nil {
 		s.delete(key)

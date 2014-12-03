@@ -99,7 +99,7 @@ func Start() {
 	//ls, _, _ := logging.Read_from_log(replication.Log_struct.Filename)
 	//ls, _, _ := logging.Read_from_log("logs" + idStr)
 	//store.ReplayLogs(ls)
-	ls, _, _ , _:= logging.ReadFromLog(filename)
+	ls, _, _, _ := logging.ReadFromLog(filename)
 	log.Println(ls)
 
 	// Do not exit
