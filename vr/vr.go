@@ -99,7 +99,7 @@ type VR struct {
 	Upcall          func(message string) (result string)
 	ReplayLogUpcall func(myLog []string)
 	lock            *sync.RWMutex
-	LogStruct	  *logging.LogStruct
+	LogStruct       *logging.LogStruct
 }
 
 func NewVR(isPrimary bool, index int64, messenger Messenger, ids []int64, uris map[int64]string, logStruct *logging.LogStruct) (s *VR) {
@@ -478,7 +478,7 @@ func (s *VR) StartViewChangeListener() {
 func (s *VR) CheckStartViewChangeQuorum() (err error) {
 	if s.NumOfStartViewChangeRecv >= s.Quorum && !(s.DoViewChangeSent) {
 		filename := "logs" + strconv.FormatInt(s.Index, 10)
-		ownLog, _, _, _ := logging.ReadFromLog(filename) //TODO: get logs from file or in memory?
+		ownLog, _, _, _ := logging.ReadFromLog(filename)   //TODO: get logs from file or in memory?
 		i := s.ViewChangeViewNum % int64(len(s.GroupUris)) //New leader index
 		uri := s.GroupUris[i]
 
@@ -619,17 +619,19 @@ func (s *VR) TestViewChangeListener() {
 //------------ Start of recovery functions -------------
 
 func (s *VR) StartRecovery() {
-	s.lock.Lock()
-	s.Status = STATUS_RECOVERY
-	s.RecoveryStatus.RecoveryNonce = rand.Int63()
-	s.IsPrimary = false //TODO: Check if it is correct to switch to 0 here
-	s.RecoveryStatus.RecoveryRestartTimer = time.NewTimer(s.getTimerInterval())
-	go s.RestartRecovery()
-	s.lock.Unlock()
-	log.Println("Start recovery protocol")
-	for i, uri := range s.GroupUris {
-		if int64(i) != s.Index {
-			go s.Messenger.SendRecovery(uri, s.Index, int64(i), s.RecoveryStatus.RecoveryNonce, s.ViewNumber, s.OpNumber)
+	if s.Status != STATUS_RECOVERY {
+		s.lock.Lock()
+		s.Status = STATUS_RECOVERY
+		s.RecoveryStatus.RecoveryNonce = rand.Int63()
+		s.IsPrimary = false //TODO: Check if it is correct to switch to 0 here
+		s.RecoveryStatus.RecoveryRestartTimer = time.NewTimer(s.getTimerInterval())
+		go s.RestartRecovery()
+		s.lock.Unlock()
+		log.Println("Start recovery protocol")
+		for i, uri := range s.GroupUris {
+			if int64(i) != s.Index {
+				go s.Messenger.SendRecovery(uri, s.Index, int64(i), s.RecoveryStatus.RecoveryNonce, s.ViewNumber, s.OpNumber)
+			}
 		}
 	}
 }
@@ -717,7 +719,6 @@ func (s *VR) RecoveryResponseListener() {
 						s.ViewNumber = s.RecoveryStatus.PrimaryViewNum
 						s.OpNumber = s.RecoveryStatus.PrimaryOpNum
 						s.CommitNumber = s.RecoveryStatus.PrimaryCommitNum
-
 
 						s.Status = STATUS_NORMAL
 						s.lock.Unlock()
