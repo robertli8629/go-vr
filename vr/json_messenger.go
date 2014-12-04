@@ -23,9 +23,7 @@ const TestViewChangeEndpoint = "/testviewchange"
 type PrepareMessage struct {
 	From          int64
 	To            int64
-	ClientID      int64
-	RequestID     int64
-	Message       string
+	Op            *Operation
 	PrimaryView   int64
 	PrimaryOp     int64
 	PrimaryCommit int64
@@ -56,7 +54,7 @@ type DoViewChangeMessage struct {
 	To        int64
 	NewView   int64
 	OldView   int64
-	Log       []string //TODO: Confirm format of log
+	Log       []*LogEntry
 	OpNum     int64
 	CommitNum int64
 }
@@ -65,7 +63,7 @@ type StartViewMessage struct {
 	From      int64
 	To        int64
 	NewView   int64
-	Log       []string //TODO: Confirm format of log
+	Log       []*LogEntry
 	OpNum     int64
 	CommitNum int64
 }
@@ -83,7 +81,7 @@ type RecoveryResponseMessage struct {
 	To        int64
 	ViewNum   int64
 	Nonce     int64
-	Log       []string //TODO: Confirm format of log
+	Log       []*LogEntry
 	OpNum     int64
 	CommitNum int64
 	IsPrimary bool
@@ -147,9 +145,9 @@ func NewJsonMessenger(port string) *JsonMessenger {
 	return m
 }
 
-func (s *JsonMessenger) SendPrepare(uri string, from int64, to int64, clientID int64, requestID int64,
-	message string, primaryView int64, primaryOp int64, primaryCommit int64) (err error) {
-	return send(uri, PrepareEndpoint, PrepareMessage{from, to, clientID, requestID, message, primaryView, primaryOp, primaryCommit})
+func (s *JsonMessenger) SendPrepare(uri string, from int64, to int64, op *Operation, primaryView int64,
+	primaryOp int64, primaryCommit int64) (err error) {
+	return send(uri, PrepareEndpoint, PrepareMessage{from, to, op, primaryView, primaryOp, primaryCommit})
 }
 
 func (s *JsonMessenger) SendPrepareOK(uri string, from int64, to int64, backupView int64, backupOp int64) (err error) {
@@ -161,14 +159,14 @@ func (s *JsonMessenger) SendCommit(uri string, from int64, to int64, primaryView
 	return send(uri, CommitEndpoint, CommitMessage{from, to, primaryView, primaryCommit})
 }
 
-func (s *JsonMessenger) ReceivePrepare() (from int64, to int64, clientID int64, requestID int64, message string,
+func (s *JsonMessenger) ReceivePrepare() (from int64, to int64, op *Operation,
 	primaryView int64, primaryOp int64, primaryCommit int64, err error) {
 	msg, ok := <-s.prepareMessages
 	if !ok {
 		err = errors.New("Error: no more incoming entries")
 		return
 	}
-	return msg.From, msg.To, msg.ClientID, msg.RequestID, msg.Message, msg.PrimaryView, msg.PrimaryOp, msg.PrimaryCommit, err
+	return msg.From, msg.To, msg.Op, msg.PrimaryView, msg.PrimaryOp, msg.PrimaryCommit, err
 }
 
 func (s *JsonMessenger) ReceivePrepareOK() (from int64, to int64, backupView int64, backupOp int64, err error) {
@@ -231,14 +229,14 @@ func (s *JsonMessenger) SendStartViewChange(uri string, from int64, to int64, ne
 	return send(uri, StartViewChangeEndpoint, StartViewChangeMessage{from, to, newView})
 }
 
-func (s *JsonMessenger) SendDoViewChange(uri string, from int64, to int64, newView int64, oldView int64, opLogs []string, opNum int64,
+func (s *JsonMessenger) SendDoViewChange(uri string, from int64, to int64, newView int64, oldView int64, log []*LogEntry, opNum int64,
 	commitNum int64) (err error) {
-	return send(uri, DoViewChangeEndpoint, DoViewChangeMessage{from, to, newView, oldView, opLogs, opNum, commitNum})
+	return send(uri, DoViewChangeEndpoint, DoViewChangeMessage{from, to, newView, oldView, log, opNum, commitNum})
 }
 
-func (s *JsonMessenger) SendStartView(uri string, from int64, to int64, newView int64, opLogs []string, opNum int64,
+func (s *JsonMessenger) SendStartView(uri string, from int64, to int64, newView int64, log []*LogEntry, opNum int64,
 	commitNum int64) (err error) {
-	return send(uri, StartViewEndpoint, StartViewMessage{from, to, newView, opLogs, opNum, commitNum})
+	return send(uri, StartViewEndpoint, StartViewMessage{from, to, newView, log, opNum, commitNum})
 }
 
 func (s *JsonMessenger) ReceiveStartViewChange() (from int64, to int64, newView int64, err error) {
@@ -250,7 +248,7 @@ func (s *JsonMessenger) ReceiveStartViewChange() (from int64, to int64, newView 
 	return msg.From, msg.To, msg.NewView, err
 }
 
-func (s *JsonMessenger) ReceiveDoViewChange() (from int64, to int64, newView int64, oldView int64, opLogs []string, opNum int64,
+func (s *JsonMessenger) ReceiveDoViewChange() (from int64, to int64, newView int64, oldView int64, log []*LogEntry, opNum int64,
 	commitNum int64, err error) {
 	msg, ok := <-s.doViewChangeMessages
 	if !ok {
@@ -260,7 +258,7 @@ func (s *JsonMessenger) ReceiveDoViewChange() (from int64, to int64, newView int
 	return msg.From, msg.To, msg.NewView, msg.OldView, msg.Log, msg.OpNum, msg.CommitNum, err
 }
 
-func (s *JsonMessenger) ReceiveStartView() (from int64, to int64, newView int64, opLogs []string, opNum int64,
+func (s *JsonMessenger) ReceiveStartView() (from int64, to int64, newView int64, log []*LogEntry, opNum int64,
 	commitNum int64, err error) {
 	msg, ok := <-s.startViewMessages
 	if !ok {
@@ -361,7 +359,7 @@ func (s *JsonMessenger) ReceiveRecovery() (from int64, to int64, nonce int64, la
 
 }
 
-func (s *JsonMessenger) ReceiveRecoveryResponse() (from int64, to int64, viewNum int64, nonce int64, opLogs []string, opNum int64,
+func (s *JsonMessenger) ReceiveRecoveryResponse() (from int64, to int64, viewNum int64, nonce int64, log []*LogEntry, opNum int64,
 	commitNum int64, isPrimary bool, err error) {
 	msg, ok := <-s.recoveryResponseMessages
 	if !ok {
@@ -374,9 +372,9 @@ func (s *JsonMessenger) SendRecovery(uri string, from int64, to int64, nonce int
 	return send(uri, RecoveryEndpoint, RecoveryMessage{from, to, nonce, lastViewNum, lastOpNum})
 }
 
-func (s *JsonMessenger) SendRecoveryResponse(uri string, from int64, to int64, viewNum int64, nonce int64, opLogs []string, opNum int64,
+func (s *JsonMessenger) SendRecoveryResponse(uri string, from int64, to int64, viewNum int64, nonce int64, log []*LogEntry, opNum int64,
 	commitNum int64, isPrimary bool) (err error) {
-	return send(uri, RecoveryResponseEndpoint, RecoveryResponseMessage{from, to, viewNum, nonce, opLogs, opNum, commitNum, isPrimary})
+	return send(uri, RecoveryResponseEndpoint, RecoveryResponseMessage{from, to, viewNum, nonce, log, opNum, commitNum, isPrimary})
 }
 
 //-----------End recovery functions------------------

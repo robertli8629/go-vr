@@ -3,12 +3,8 @@ package kv
 import (
 	"encoding/json"
 	"log"
-	"strconv"
-	"strings"
 	"sync"
-	"unicode"
 
-	"github.com/robertli8629/go-vr/logging"
 	"github.com/robertli8629/go-vr/vr"
 )
 
@@ -34,139 +30,83 @@ const DELETE = 1
 
 func NewKVStore(id int64, replication *vr.VR) *KVStore {
 	store := KVStore{id: id, store: make(map[string]*string), lock: new(sync.RWMutex), requestNumber: 0, replication: replication}
-	replication.RegisterUpcall(store.processMessage)
-	replication.RegisterReplayLogUpcall(store.ReplayLogs)
+	replication.InitializeService(store.processMessage)
 	return &store
 }
 
-func (s *KVStore) generateMessage(op OpType, key string, value string) (msg string) {
+func (s *KVStore) generateMessage(op OpType, key string, value string) (msg *string) {
 	b, _ := json.Marshal(&Message{op, key, value})
-	return string(b)
+	str := string(b)
+	return &str
 }
 
-func (s *KVStore) processMessage(msg string) (result string) {
+func (s *KVStore) processMessage(op *vr.Operation) (result interface{}) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	s.requestNumber = op.RequestID
+
 	var message Message
-	err := json.Unmarshal([]byte(msg), &message)
+	err := json.Unmarshal([]byte(*op.Message), &message)
 	if err != nil {
-		return "Error: " + err.Error()
+		return err
 	}
+
 	switch message.Op {
 	case PUT:
 		s.put(message.Key, &message.Value)
-		return "Success"
 	case DELETE:
-		log.Println("deleting: " + message.Key)
 		s.delete(message.Key)
-		return "Success"
 	default:
-		panic(msg)
-		return "Error: unknow message type: " + msg
+		panic(op)
 	}
-}
 
-func (s *KVStore) ReplayLogs(logs []string) {
-	log.Println("Replaying logs....")
-	for l := range logs {
-		line := logs[l]
-		f := func(c rune) bool {
-			if c == '/' {
-				return false
-			}
-			return !unicode.IsLetter(c) && !unicode.IsNumber(c)
-		}
-		fields := strings.FieldsFunc(line, f)
-
-		op := fields[2]
-		key := fields[3]
-		value := fields[4]
-		opid, err := strconv.Atoi(op)
-		if err != nil {
-			panic(err)
-		}
-
-		switch opid {
-		case PUT:
-			s.replayPut(key, &value)
-		case DELETE:
-			s.replayDelete(key)
-		default:
-			panic(op)
-			return
-		}
-	}
+	return nil
 }
 
 func (s *KVStore) Get(key string) (value *string) {
 	s.lock.RLock()
-	value = s.store[key]
-	s.lock.RUnlock()
-	return value
+	defer s.lock.RUnlock()
+	return s.store[key]
 }
 
 func (s *KVStore) Put(key string, value *string) (err error) {
 	s.lock.Lock()
 	s.requestNumber++
-	err = s.replication.RequestAsync(s.id, s.requestNumber, s.generateMessage(PUT, key, *value))
+	op := &vr.Operation{s.id, s.requestNumber, s.generateMessage(PUT, key, *value)}
+	resultChan := s.replication.RequestAsync(op)
 	s.lock.Unlock()
-	if err == nil {
-		s.put(key, value)
-	}
-	return err
+	log.Printf("Waiting for result: Request %v - Put %v %v\n", s.requestNumber, key, *value)
+	return receiveError(resultChan)
 }
 
 func (s *KVStore) put(key string, value *string) {
-	s.lock.Lock()
 	s.store[key] = value
-	// add to log
-	text := ""
-	text = text + "0-" + key + "-" + *value
-	l := logging.Log{strconv.FormatInt(s.replication.ViewNumber, 10), strconv.FormatInt(s.replication.OpNumber, 10), text}
-	logging.WriteToLog(l, s.replication.LogStruct.Filename)
-	s.lock.Unlock()
-}
-
-func (s *KVStore) replayPut(key string, value *string) {
-	s.lock.Lock()
-	s.store[key] = value
-	s.lock.Unlock()
 }
 
 func (s *KVStore) Delete(key string) (err error) {
 	s.lock.Lock()
 	s.requestNumber++
-	err = s.replication.RequestAsync(s.id, s.requestNumber, s.generateMessage(DELETE, key, ""))
+	op := &vr.Operation{s.id, s.requestNumber, s.generateMessage(DELETE, key, "")}
+	resultChan := s.replication.RequestAsync(op)
 	s.lock.Unlock()
-	if err == nil {
-		s.delete(key)
-	}
-	return err
+	log.Printf("Waiting for result: Request %v - Delete %v\n", s.requestNumber, key)
+	return receiveError(resultChan)
 }
 
 func (s *KVStore) delete(key string) {
-	s.lock.Lock()
 	delete(s.store, key)
-	// add to log
-	text := ""
-	text = text + "1-" + key + "-0"
-	l := logging.Log{strconv.FormatInt(s.replication.ViewNumber, 10), strconv.FormatInt(s.replication.OpNumber, 10), text}
-	logging.WriteToLog(l, s.replication.LogStruct.Filename)
-	s.lock.Unlock()
 }
 
-func (s *KVStore) replayDelete(key string) {
-	s.lock.Lock()
-	delete(s.store, key)
-	s.lock.Unlock()
-}
-
-func (s *KVStore) List(prefix string) (list []string) {
-	list = []string{}
-	s.lock.Lock()
-	for key, _ := range s.store {
-		if strings.HasPrefix(key, prefix) {
-			list = append(list, key)
+func receiveError(resultChan <-chan interface{}) (err error) {
+	result, ok := <-resultChan
+	if !ok {
+		panic("Unexpected: Channel closed.")
+	}
+	if result != nil {
+		if err, ok = result.(error); !ok {
+			panic(result)
 		}
 	}
-	s.lock.Unlock()
-	return list
+	return err
 }

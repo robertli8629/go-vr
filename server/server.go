@@ -1,6 +1,7 @@
 package server
 
 import (
+	"io/ioutil"
 	"log"
 	"net/http"
 
@@ -24,18 +25,20 @@ func NewServer(port string, s *kv.KVStore) (server *Server) {
 
 	handler := rest.ResourceHandler{
 		EnableRelaxedContentType: true,
+		EnableResponseStackTrace: true,
+		// Discard go-json-rest logs
+		Logger: log.New(ioutil.Discard, "", 0),
 	}
 	err := handler.SetRoutes(
 		&rest.Route{"PUT", "/object/*key", server.Put},
 		&rest.Route{"GET", "/object/*key", server.Get},
 		&rest.Route{"DELETE", "/object/*key", server.Delete},
-		&rest.Route{"GET", "/list/*prefix", server.List},
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	log.Println("Listening messenges from clients at", portStr)
+	log.Println("Listening messages from clients at", portStr)
 
 	go func() {
 		log.Fatal(http.ListenAndServe(server.portStr, &handler))
@@ -87,10 +90,4 @@ func (s *Server) Delete(w rest.ResponseWriter, r *rest.Request) {
 	s.store.Delete(key)
 	log.Println("Response: Success")
 	w.WriteHeader(http.StatusOK)
-}
-
-func (s *Server) List(w rest.ResponseWriter, r *rest.Request) {
-	prefix := r.PathParam("prefix")
-	list := s.store.List(prefix)
-	w.WriteJson(list)
 }

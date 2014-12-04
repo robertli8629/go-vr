@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/robertli8629/go-vr/kv"
-	"github.com/robertli8629/go-vr/logging"
 	"github.com/robertli8629/go-vr/server"
 	"github.com/robertli8629/go-vr/vr"
 )
@@ -44,9 +43,6 @@ func Start() {
 	argsWithoutProg := os.Args[1:]
 	argSize := len(argsWithoutProg)
 
-	var id int
-	//var id64 int64
-	id = 0
 	if argSize == 0 {
 		panic("Server index is needed as an argument.")
 	}
@@ -67,11 +63,6 @@ func Start() {
 		log.Println("This is REPLICA")
 	}
 
-	if argSize >= 2 && argsWithoutProg[1] == "coldstart" {
-		log.Println("initializing log")
-		logging.ReplaceLogs("logs"+idStr, make([]string, 0))
-	}
-
 	messenger := vr.NewJsonMessenger(peerPort)
 
 	//uri := []string{}
@@ -84,14 +75,16 @@ func Start() {
 	}
 
 	filename := "logs" + idStr
-	f, err := os.OpenFile(filename, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
-	if err != nil {
-		panic(err)
+
+	appendOnly := true
+	if argSize >= 2 && argsWithoutProg[1] == "coldstart" {
+		log.Println("initializing log")
+		appendOnly = false
 	}
 
-	logStruct := logging.NewLogStruct(f, filename)
+	logger := vr.NewJsonLogger(&filename, appendOnly)
 	// Using same id for VR and KV for convenience only
-	replication := vr.NewVR(isPrimary, int64(id), messenger, ids, uris, logStruct)
+	replication := vr.NewVR(isPrimary, int64(id), messenger, logger, ids, uris)
 	store := kv.NewKVStore(int64(id), replication)
 	server.NewServer(serverPort, store)
 
@@ -99,8 +92,6 @@ func Start() {
 	//ls, _, _ := logging.Read_from_log(replication.Log_struct.Filename)
 	//ls, _, _ := logging.Read_from_log("logs" + idStr)
 	//store.ReplayLogs(ls)
-	ls, _, _, _ := logging.ReadFromLog(filename)
-	log.Println(ls)
 
 	// Do not exit
 	<-make(chan interface{})
