@@ -210,13 +210,11 @@ func (s *VR) PrepareListener() {
 
 		if primaryView > s.ViewNumber {
 			//If this node also thinks it is a prmary, will do recovery
-			//TODO: But if this node is a replica - state transfer or recovery?
 			go s.StartRecovery()
 			continue
 		}
 
 		if primaryOp > s.OpNumber+1 {
-			// TODO: State transfer to get missing information
 			go s.StartRecovery()
 			continue
 		}
@@ -299,8 +297,6 @@ func (s *VR) CommitListener() {
 		}
 
 		if primaryView > s.ViewNumber {
-			//If this node also thinks it is a prmary, will do recovery
-			//TODO: But if this node is a replica - state transfer or recovery?
 			go s.StartRecovery()
 			continue
 		} else if primaryCommit >= s.CommitNumber+2 {
@@ -484,7 +480,7 @@ func (s *VR) StartViewChangeListener() {
 func (s *VR) CheckStartViewChangeQuorum() (err error) {
 	if s.NumOfStartViewChangeRecv >= s.QuorumSize && !(s.DoViewChangeSent) {
 		filename := "logs" + strconv.FormatInt(s.Index, 10)
-		ownLog, _, _, _ := logging.ReadFromLog(filename)   //TODO: get logs from file or in memory?
+		ownLog, _, _, _ := logging.ReadFromLog(filename)
 		i := s.ViewChangeViewNum % int64(len(s.GroupUris)) //New leader index
 		uri := s.GroupUris[i]
 
@@ -563,7 +559,6 @@ func (s *VR) StartView() (err error) {
 	s.ResetViewChangeSates()
 
 	filename := "logs" + strconv.FormatInt(s.Index, 10)
-	//ownLog, _, _, _ := logging.ReadFromLog(filename) //TODO: get logs
 	logging.ReplaceLogs(filename, s.Log)
 	for i, uri := range s.GroupUris {
 		if int64(i) != s.Index {
@@ -673,7 +668,7 @@ func (s *VR) RecoveryListener() {
 			if s.IsPrimary == true {
 				filename := "logs" + strconv.FormatInt(s.Index, 10)
 				if lastViewNum == -1 || lastOpNum == -1 {
-					ownLog, _, _, _ := logging.ReadFromLog(filename) //TODO: get logs
+					ownLog, _, _, _ := logging.ReadFromLog(filename)
 					s.Messenger.SendRecoveryResponse(uri, s.Index, from, s.ViewNumber, nonce, ownLog, s.OpNumber, s.CommitNumber, s.IsPrimary)
 				} else {
 					ownLog, _, _, _ := logging.ReadPartialFromLog(filename, lastViewNum, lastOpNum)
