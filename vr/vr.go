@@ -24,19 +24,20 @@ type Messenger interface {
 	ReceivePrepare() (from int64, to int64, op *Operation, primaryView int64, primaryOp int64, primaryCommit int64, err error)
 	ReceivePrepareOK() (from int64, to int64, backupView int64, backupOp int64, err error)
 	ReceiveCommit() (from int64, to int64, primaryView int64, primaryCommit int64, err error)
+
 	SendStartViewChange(uri string, from int64, to int64, newView int64) (err error)
 	SendDoViewChange(uri string, from int64, to int64, newView int64, oldView int64, log []*LogEntry, opNum int64,
 		commitNum int64) (err error)
 	SendStartView(uri string, from int64, to int64, newView int64, log []*LogEntry, opNum int64, commitNum int64) (err error)
-	SendRecovery(uri string, from int64, to int64, nonce int64, lastViewNum int64, lastOpNum int64) (err error)
-
+	SendRecovery(uri string, from int64, to int64, nonce int64, lastCommitNum int64) (err error)
 	SendRecoveryResponse(uri string, from int64, to int64, viewNum int64, nonce int64, log []*LogEntry, opNum int64, commitNum int64, isPrimary bool) (err error)
+
 	ReceiveStartViewChange() (from int64, to int64, newView int64, err error)
 	ReceiveDoViewChange() (from int64, to int64, newView int64, oldView int64, log []*LogEntry, opNum int64, commitNum int64, err error)
 	ReceiveStartView() (from int64, to int64, newView int64, log []*LogEntry, opNum int64, commitNum int64, err error)
-	ReceiveRecovery() (from int64, to int64, nonce int64, lastViewNum int64, lastOpNum int64, err error)
-
+	ReceiveRecovery() (from int64, to int64, nonce int64, lastCommitNum int64, err error)
 	ReceiveRecoveryResponse() (from int64, to int64, viewNum int64, nonce int64, log []*LogEntry, opNum int64, commitNum int64, isPrimary bool, err error)
+
 	ReceiveTestViewChange() (result bool, err error)
 }
 
@@ -576,7 +577,7 @@ func (s *VR) StartRecovery() {
 		log.Println("Start recovery protocol")
 		for i, uri := range s.GroupUris {
 			if int64(i) != s.Index {
-				go s.Messenger.SendRecovery(uri, s.Index, int64(i), s.RecoveryStatus.RecoveryNonce, s.ViewNumber, s.OpNumber)
+				go s.Messenger.SendRecovery(uri, s.Index, int64(i), s.RecoveryStatus.RecoveryNonce, s.CommitNumber)
 			}
 		}
 	}
@@ -595,14 +596,14 @@ func (s *VR) RestartRecovery() {
 	log.Println("Restarting recovery protocol")
 	for i, uri := range s.GroupUris {
 		if int64(i) != s.Index {
-			go s.Messenger.SendRecovery(uri, s.Index, int64(i), s.RecoveryStatus.RecoveryNonce, s.ViewNumber, s.OpNumber)
+			go s.Messenger.SendRecovery(uri, s.Index, int64(i), s.RecoveryStatus.RecoveryNonce, s.CommitNumber)
 		}
 	}
 }
 
 func (s *VR) RecoveryListener() {
 	for {
-		from, _, nonce, _, _, err := s.Messenger.ReceiveRecovery()
+		from, _, nonce, lastCommitNum, err := s.Messenger.ReceiveRecovery()
 		if err != nil {
 			continue
 		}
@@ -610,8 +611,7 @@ func (s *VR) RecoveryListener() {
 			log.Println("Received a recovery request from node ", from)
 			uri := s.GroupUris[from]
 			if s.IsPrimary {
-				// TODO: partial log recovery. maybe only in same view?
-				s.Messenger.SendRecoveryResponse(uri, s.Index, from, s.ViewNumber, nonce, s.Log, s.OpNumber, s.CommitNumber, s.IsPrimary)
+				s.Messenger.SendRecoveryResponse(uri, s.Index, from, s.ViewNumber, nonce, s.Log[lastCommitNum+1:], s.OpNumber, s.CommitNumber, s.IsPrimary)
 			} else {
 				s.Messenger.SendRecoveryResponse(uri, s.Index, from, s.ViewNumber, nonce, nil, -1, -1, s.IsPrimary)
 			}
@@ -653,7 +653,7 @@ func (s *VR) RecoveryResponseListener() {
 							s.Log = s.RecoveryStatus.LogRecv
 						} else {
 							//Appending to logs
-							s.Log = append(s.Log, s.RecoveryStatus.LogRecv...)
+							s.Log = append(s.Log[:s.CommitNumber+1], s.RecoveryStatus.LogRecv...)
 						}
 
 						s.ViewNumber = s.RecoveryStatus.PrimaryViewNum
