@@ -565,6 +565,10 @@ func (s *VR) StartView() (err error) {
 			go s.Messenger.SendStartView(uri, s.Index, int64(i), s.ViewNumber, s.Log, s.OpNumber, s.CommitNumber)
 		}
 	}
+
+	//TODO: Execute committed operations that have not previously been commited at this node i.e. commit up till recvCommitNum
+	//TODO: Update client table and reply to clients if needed
+
 	log.Println("Got quorum for doviewchange msg. Sent startview")
 	log.Println("This is the NEW PRIMARY. New view number: ", s.ViewNumber)
 
