@@ -407,8 +407,9 @@ func (s *VR) ReceiveStartViewChange(from int64, to int64, newView int64) {
 	if s.Status == STATUS_NORMAL && newView > s.ViewNumber {
 		log.Println("Hear startviewchange msg for first time")
 		s.NumOfStartViewChangeRecv++
-		go s.StartViewChange(newView, false)
 		s.HeartbeatTimer.Stop()
+		go s.StartViewChange(newView, false)
+
 	} else if (s.Status == STATUS_VIEWCHANGE) && (newView == s.ViewChangeViewNum) {
 		log.Println("Hear startviewchange msg")
 		s.NumOfStartViewChangeRecv++
@@ -420,8 +421,6 @@ func (s *VR) ReceiveStartViewChange(from int64, to int64, newView int64) {
 }
 
 func (s *VR) ReceiveDoViewChange(from int64, to int64, recvNewView int64, recvOldView int64, recvLog []*LogEntry, recvOpNum int64, recvCommitNum int64) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
 
 	log.Println("Recv DoViewChange msg")
 
@@ -432,6 +431,7 @@ func (s *VR) ReceiveDoViewChange(from int64, to int64, recvNewView int64, recvOl
 
 	//Increment number of DoViewChange msg recvd
 	if s.Status == STATUS_VIEWCHANGE && s.ViewChangeViewNum == recvNewView {
+		s.lock.Lock()
 		s.NumOfDoViewChangeRecv++
 		//Store logs if it is more updated than any logs previously heard
 		//Check log view number and op number
@@ -445,9 +445,9 @@ func (s *VR) ReceiveDoViewChange(from int64, to int64, recvNewView int64, recvOl
 		if recvCommitNum > s.DoViewChangeStatus.LargestCommitNum {
 			s.DoViewChangeStatus.LargestCommitNum = recvCommitNum
 		}
-
+		s.lock.Unlock()
 		if s.NumOfDoViewChangeRecv >= s.QuorumSize {
-			go s.StartView()
+			s.StartView()
 		}
 	}
 }
@@ -618,9 +618,9 @@ func (s *VR) ReceiveRecoveryResponse(from int64, to int64, recvViewNum int64, re
 						s.Log = append(s.Log[:s.CommitNumber+1], s.RecoveryStatus.LogRecv...)
 					}
 
-					s.ViewNumber = s.RecoveryStatus.PrimaryViewNum
 					s.OpNumber = s.RecoveryStatus.PrimaryOpNum
 					s.playLogUntil(s.RecoveryStatus.PrimaryCommitNum + 1)
+					s.ViewNumber = s.RecoveryStatus.PrimaryViewNum
 
 					s.Status = STATUS_NORMAL
 
