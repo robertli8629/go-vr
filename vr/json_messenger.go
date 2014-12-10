@@ -3,7 +3,6 @@ package vr
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"log"
 	"net/http"
 
@@ -18,7 +17,7 @@ const DoViewChangeEndpoint = "/doviewchange"
 const StartViewEndpoint = "/startview"
 const RecoveryEndpoint = "/recovery"
 const RecoveryResponseEndpoint = "/recoveryresponse"
-const TestViewChangeEndpoint = "/testviewchange"
+const StartRecoveryEndpoint = "/startrecovery"
 
 type PrepareMessage struct {
 	From          int64
@@ -86,36 +85,23 @@ type RecoveryResponseMessage struct {
 	IsPrimary bool
 }
 
-type TestViewChangeMessage struct {
-	NewView int64
-}
-
 type JsonMessenger struct {
-	ID int64
-	Uris map[int64]string
-	prepareMessages          chan *PrepareMessage
-	prepareOKMessages        chan *PrepareOKMessage
-	commitMessages           chan *CommitMessage
-	startViewChangeMessages  chan *StartViewChangeMessage
-	doViewChangeMessages     chan *DoViewChangeMessage
-	startViewMessages        chan *StartViewMessage
-	recoveryMessages         chan *RecoveryMessage
-	recoveryResponseMessages chan *RecoveryResponseMessage
-	testViewChangeMessages   chan *TestViewChangeMessage
+	ID                      int64
+	Uris                    map[int64]string
+	ReceivePrepare          func(from int64, to int64, op *Operation, primaryView int64, primaryOp int64, primaryCommit int64)
+	ReceivePrepareOK        func(from int64, to int64, backupView int64, backupOp int64)
+	ReceiveCommit           func(from int64, to int64, primaryView int64, primaryCommit int64)
+	ReceiveStartViewChange  func(from int64, to int64, newView int64)
+	ReceiveDoViewChange     func(from int64, to int64, newView int64, oldView int64, log []*LogEntry, opNum int64, commitNum int64)
+	ReceiveStartView        func(from int64, to int64, newView int64, log []*LogEntry, opNum int64, commitNum int64)
+	ReceiveRecovery         func(from int64, to int64, nonce int64, lastCommitNum int64)
+	ReceiveRecoveryResponse func(from int64, to int64, viewNum int64, nonce int64, log []*LogEntry, opNum int64, commitNum int64, isPrimary bool)
+	ReceiveStartRecovery    func()
 }
 
 func NewJsonMessenger(addr string, uris map[int64]string) *JsonMessenger {
 	m := &JsonMessenger{
 		Uris: uris,
-		prepareMessages:          make(chan *PrepareMessage),
-		prepareOKMessages:        make(chan *PrepareOKMessage),
-		commitMessages:           make(chan *CommitMessage),
-		startViewChangeMessages:  make(chan *StartViewChangeMessage),
-		doViewChangeMessages:     make(chan *DoViewChangeMessage),
-		startViewMessages:        make(chan *StartViewMessage),
-		recoveryMessages:         make(chan *RecoveryMessage),
-		recoveryResponseMessages: make(chan *RecoveryResponseMessage),
-		testViewChangeMessages:   make(chan *TestViewChangeMessage),
 	}
 
 	handler := rest.ResourceHandler{
@@ -130,7 +116,7 @@ func NewJsonMessenger(addr string, uris map[int64]string) *JsonMessenger {
 		&rest.Route{"PUT", StartViewEndpoint, m.startViewHandler},
 		&rest.Route{"PUT", RecoveryEndpoint, m.recoveryHandler},
 		&rest.Route{"PUT", RecoveryResponseEndpoint, m.recoveryResponseHandler},
-		&rest.Route{"PUT", TestViewChangeEndpoint, m.testViewChangeHandler},
+		&rest.Route{"PUT", StartRecoveryEndpoint, m.startRecoveryHandler},
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -143,6 +129,27 @@ func NewJsonMessenger(addr string, uris map[int64]string) *JsonMessenger {
 	}()
 
 	return m
+}
+
+func (s *JsonMessenger) RegisterReceiveCallback(
+	receivePrepare func(from int64, to int64, op *Operation, primaryView int64, primaryOp int64, primaryCommit int64),
+	receivePrepareOK func(from int64, to int64, backupView int64, backupOp int64),
+	receiveCommit func(from int64, to int64, primaryView int64, primaryCommit int64),
+	receiveStartViewChange func(from int64, to int64, newView int64),
+	receiveDoViewChange func(from int64, to int64, newView int64, oldView int64, log []*LogEntry, opNum int64, commitNum int64),
+	receiveStartView func(from int64, to int64, newView int64, log []*LogEntry, opNum int64, commitNum int64),
+	receiveRecovery func(from int64, to int64, nonce int64, lastCommitNum int64),
+	receiveRecoveryResponse func(from int64, to int64, viewNum int64, nonce int64, log []*LogEntry, opNum int64, commitNum int64, isPrimary bool),
+	receiveStartRecovery func()) {
+	s.ReceivePrepare = receivePrepare
+	s.ReceivePrepareOK = receivePrepareOK
+	s.ReceiveCommit = receiveCommit
+	s.ReceiveStartViewChange = receiveStartViewChange
+	s.ReceiveDoViewChange = receiveDoViewChange
+	s.ReceiveStartView = receiveStartView
+	s.ReceiveRecovery = receiveRecovery
+	s.ReceiveRecoveryResponse = receiveRecoveryResponse
+	s.ReceiveStartRecovery = receiveStartRecovery
 }
 
 func (s *JsonMessenger) SendPrepare(from int64, to int64, op *Operation, primaryView int64,
@@ -159,34 +166,6 @@ func (s *JsonMessenger) SendCommit(from int64, to int64, primaryView int64,
 	return send(s.Uris[to], CommitEndpoint, CommitMessage{from, to, primaryView, primaryCommit})
 }
 
-func (s *JsonMessenger) ReceivePrepare() (from int64, to int64, op *Operation,
-	primaryView int64, primaryOp int64, primaryCommit int64, err error) {
-	msg, ok := <-s.prepareMessages
-	if !ok {
-		err = errors.New("Error: no more incoming entries")
-		return
-	}
-	return msg.From, msg.To, msg.Op, msg.PrimaryView, msg.PrimaryOp, msg.PrimaryCommit, err
-}
-
-func (s *JsonMessenger) ReceivePrepareOK() (from int64, to int64, backupView int64, backupOp int64, err error) {
-	msg, ok := <-s.prepareOKMessages
-	if !ok {
-		err = errors.New("Error: no more incoming entries")
-		return
-	}
-	return msg.From, msg.To, msg.BackupView, msg.BackupOp, err
-}
-
-func (s *JsonMessenger) ReceiveCommit() (from int64, to int64, primaryView int64, primaryCommit int64, err error) {
-	msg, ok := <-s.commitMessages
-	if !ok {
-		err = errors.New("Error: no more incoming entries")
-		return
-	}
-	return msg.From, msg.To, msg.PrimaryView, msg.PrimaryCommit, err
-}
-
 func (s *JsonMessenger) prepareHandler(w rest.ResponseWriter, r *rest.Request) {
 	log.Println("Peer Request: /prepare")
 	msg := PrepareMessage{}
@@ -195,7 +174,7 @@ func (s *JsonMessenger) prepareHandler(w rest.ResponseWriter, r *rest.Request) {
 		rest.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.prepareMessages <- &msg
+	go s.ReceivePrepare(msg.From, msg.To, msg.Op, msg.PrimaryView, msg.PrimaryOp, msg.PrimaryCommit)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -207,7 +186,7 @@ func (s *JsonMessenger) prepareOKHandler(w rest.ResponseWriter, r *rest.Request)
 		rest.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.prepareOKMessages <- &msg
+	go s.ReceivePrepareOK(msg.From, msg.To, msg.BackupView, msg.BackupOp)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -219,7 +198,7 @@ func (s *JsonMessenger) commitHandler(w rest.ResponseWriter, r *rest.Request) {
 		rest.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.commitMessages <- &msg
+	go s.ReceiveCommit(msg.From, msg.To, msg.PrimaryView, msg.PrimaryCommit)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -239,35 +218,6 @@ func (s *JsonMessenger) SendStartView(from int64, to int64, newView int64, log [
 	return send(s.Uris[to], StartViewEndpoint, StartViewMessage{from, to, newView, log, opNum, commitNum})
 }
 
-func (s *JsonMessenger) ReceiveStartViewChange() (from int64, to int64, newView int64, err error) {
-	msg, ok := <-s.startViewChangeMessages
-	if !ok {
-		err = errors.New("Error: no more incoming entries")
-		return
-	}
-	return msg.From, msg.To, msg.NewView, err
-}
-
-func (s *JsonMessenger) ReceiveDoViewChange() (from int64, to int64, newView int64, oldView int64, log []*LogEntry, opNum int64,
-	commitNum int64, err error) {
-	msg, ok := <-s.doViewChangeMessages
-	if !ok {
-		err = errors.New("Error: no more incoming entries")
-		return
-	}
-	return msg.From, msg.To, msg.NewView, msg.OldView, msg.Log, msg.OpNum, msg.CommitNum, err
-}
-
-func (s *JsonMessenger) ReceiveStartView() (from int64, to int64, newView int64, log []*LogEntry, opNum int64,
-	commitNum int64, err error) {
-	msg, ok := <-s.startViewMessages
-	if !ok {
-		err = errors.New("Error: no more incoming entries")
-		return
-	}
-	return msg.From, msg.To, msg.NewView, msg.Log, msg.OpNum, msg.CommitNum, err
-}
-
 func (s *JsonMessenger) startViewChangeHandler(w rest.ResponseWriter, r *rest.Request) {
 	msg := StartViewChangeMessage{}
 	err := r.DecodeJsonPayload(&msg)
@@ -275,7 +225,7 @@ func (s *JsonMessenger) startViewChangeHandler(w rest.ResponseWriter, r *rest.Re
 		rest.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.startViewChangeMessages <- &msg
+	go s.ReceiveStartViewChange(msg.From, msg.To, msg.NewView)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -286,7 +236,7 @@ func (s *JsonMessenger) doViewChangeHandler(w rest.ResponseWriter, r *rest.Reque
 		rest.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.doViewChangeMessages <- &msg
+	go s.ReceiveDoViewChange(msg.From, msg.To, msg.NewView, msg.OldView, msg.Log, msg.OpNum, msg.CommitNum)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -297,37 +247,28 @@ func (s *JsonMessenger) startViewHandler(w rest.ResponseWriter, r *rest.Request)
 		rest.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.startViewMessages <- &msg
+	go s.ReceiveStartView(msg.From, msg.To, msg.NewView, msg.Log, msg.OpNum, msg.CommitNum)
 	w.WriteHeader(http.StatusOK)
 }
 
-func (s *JsonMessenger) testViewChangeHandler(w rest.ResponseWriter, r *rest.Request) {
-	msg := TestViewChangeMessage{}
-	err := r.DecodeJsonPayload(&msg)
-	if err != nil {
-		rest.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	s.testViewChangeMessages <- &msg
+func (s *JsonMessenger) startRecoveryHandler(w rest.ResponseWriter, r *rest.Request) {
+	go s.ReceiveStartRecovery()
 	w.WriteHeader(http.StatusOK)
-}
-
-func (s *JsonMessenger) ReceiveTestViewChange() (result bool, err error) {
-	_, ok := <-s.testViewChangeMessages
-	if !ok {
-		err = errors.New("Error: no more incoming entries")
-		result = false
-		return
-	} else {
-		result = true
-		log.Println("Test view change")
-	}
-	return result, err
 }
 
 //-----------End view change functions---------------
 
 //-----------Start recovery functions----------------
+
+func (s *JsonMessenger) SendRecovery(from int64, to int64, nonce int64, lastCommitNum int64) (err error) {
+	return send(s.Uris[to], RecoveryEndpoint, RecoveryMessage{from, to, nonce, lastCommitNum})
+}
+
+func (s *JsonMessenger) SendRecoveryResponse(from int64, to int64, viewNum int64, nonce int64, log []*LogEntry, opNum int64,
+	commitNum int64, isPrimary bool) (err error) {
+	return send(s.Uris[to], RecoveryResponseEndpoint, RecoveryResponseMessage{from, to, viewNum, nonce, log, opNum, commitNum, isPrimary})
+}
+
 func (s *JsonMessenger) recoveryHandler(w rest.ResponseWriter, r *rest.Request) {
 	msg := RecoveryMessage{}
 	err := r.DecodeJsonPayload(&msg)
@@ -335,7 +276,7 @@ func (s *JsonMessenger) recoveryHandler(w rest.ResponseWriter, r *rest.Request) 
 		rest.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.recoveryMessages <- &msg
+	go s.ReceiveRecovery(msg.From, msg.To, msg.Nonce, msg.LastCommitNum)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -346,35 +287,8 @@ func (s *JsonMessenger) recoveryResponseHandler(w rest.ResponseWriter, r *rest.R
 		rest.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.recoveryResponseMessages <- &msg
+	go s.ReceiveRecoveryResponse(msg.From, msg.To, msg.ViewNum, msg.Nonce, msg.Log, msg.OpNum, msg.CommitNum, msg.IsPrimary)
 	w.WriteHeader(http.StatusOK)
-}
-func (s *JsonMessenger) ReceiveRecovery() (from int64, to int64, nonce int64, lastCommitNum int64, err error) {
-	msg, ok := <-s.recoveryMessages
-	if !ok {
-		err = errors.New("Error: no more incoming entries")
-		return
-	}
-	return msg.From, msg.To, msg.Nonce, msg.LastCommitNum, err
-
-}
-
-func (s *JsonMessenger) ReceiveRecoveryResponse() (from int64, to int64, viewNum int64, nonce int64, log []*LogEntry, opNum int64,
-	commitNum int64, isPrimary bool, err error) {
-	msg, ok := <-s.recoveryResponseMessages
-	if !ok {
-		err = errors.New("Error: no more incoming entries")
-		return
-	}
-	return msg.From, msg.To, msg.ViewNum, msg.Nonce, msg.Log, msg.OpNum, msg.CommitNum, msg.IsPrimary, err
-}
-func (s *JsonMessenger) SendRecovery(from int64, to int64, nonce int64, lastCommitNum int64) (err error) {
-	return send(s.Uris[to], RecoveryEndpoint, RecoveryMessage{from, to, nonce, lastCommitNum})
-}
-
-func (s *JsonMessenger) SendRecoveryResponse(from int64, to int64, viewNum int64, nonce int64, log []*LogEntry, opNum int64,
-	commitNum int64, isPrimary bool) (err error) {
-	return send(s.Uris[to], RecoveryResponseEndpoint, RecoveryResponseMessage{from, to, viewNum, nonce, log, opNum, commitNum, isPrimary})
 }
 
 //-----------End recovery functions------------------

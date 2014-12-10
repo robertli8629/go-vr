@@ -18,27 +18,26 @@ const HEARTBEAT_INTERVAL_MS = 5000
 const VIEWCHANGE_TIMEOUT_MULTIPLE = 2 //Viewchange start in multiple of heartbeat interval
 
 type Messenger interface {
+	RegisterReceiveCallback(
+		receivePrepare func(from int64, to int64, op *Operation, primaryView int64, primaryOp int64, primaryCommit int64),
+		receivePrepareOK func(from int64, to int64, backupView int64, backupOp int64),
+		receiveCommit func(from int64, to int64, primaryView int64, primaryCommit int64),
+		receiveStartViewChange func(from int64, to int64, newView int64),
+		receiveDoViewChange func(from int64, to int64, newView int64, oldView int64, log []*LogEntry, opNum int64, commitNum int64),
+		receiveStartView func(from int64, to int64, newView int64, log []*LogEntry, opNum int64, commitNum int64),
+		receiveRecovery func(from int64, to int64, nonce int64, lastCommitNum int64),
+		receiveRecoveryResponse func(from int64, to int64, viewNum int64, nonce int64, log []*LogEntry, opNum int64, commitNum int64, isPrimary bool),
+		ReceiveStartRecovery func())
+
 	SendPrepare(from int64, to int64, op *Operation, primaryView int64, primaryOp int64, primaryCommit int64) (err error)
 	SendPrepareOK(from int64, to int64, backupView int64, backupOp int64) (err error)
 	SendCommit(from int64, to int64, primaryView int64, primaryCommit int64) (err error)
-	ReceivePrepare() (from int64, to int64, op *Operation, primaryView int64, primaryOp int64, primaryCommit int64, err error)
-	ReceivePrepareOK() (from int64, to int64, backupView int64, backupOp int64, err error)
-	ReceiveCommit() (from int64, to int64, primaryView int64, primaryCommit int64, err error)
-
 	SendStartViewChange(from int64, to int64, newView int64) (err error)
 	SendDoViewChange(from int64, to int64, newView int64, oldView int64, log []*LogEntry, opNum int64,
 		commitNum int64) (err error)
 	SendStartView(from int64, to int64, newView int64, log []*LogEntry, opNum int64, commitNum int64) (err error)
 	SendRecovery(from int64, to int64, nonce int64, lastCommitNum int64) (err error)
 	SendRecoveryResponse(from int64, to int64, viewNum int64, nonce int64, log []*LogEntry, opNum int64, commitNum int64, isPrimary bool) (err error)
-
-	ReceiveStartViewChange() (from int64, to int64, newView int64, err error)
-	ReceiveDoViewChange() (from int64, to int64, newView int64, oldView int64, log []*LogEntry, opNum int64, commitNum int64, err error)
-	ReceiveStartView() (from int64, to int64, newView int64, log []*LogEntry, opNum int64, commitNum int64, err error)
-	ReceiveRecovery() (from int64, to int64, nonce int64, lastCommitNum int64, err error)
-	ReceiveRecoveryResponse() (from int64, to int64, viewNum int64, nonce int64, log []*LogEntry, opNum int64, commitNum int64, isPrimary bool, err error)
-
-	ReceiveTestViewChange() (result bool, err error)
 }
 
 type Logger interface {
@@ -128,6 +127,9 @@ func NewVR(isPrimary bool, index int64, messenger Messenger, logger Logger, ids 
 	s.HeartbeatTimer = time.NewTimer(s.getTimerInterval())
 	s.lock = &sync.RWMutex{}
 	s.Status = STATUS_NORMAL
+	s.Messenger.RegisterReceiveCallback(s.ReceivePrepare, s.ReceivePrepareOK, s.ReceiveCommit, s.ReceiveStartViewChange,
+		s.ReceiveDoViewChange, s.ReceiveStartView, s.ReceiveRecovery, s.ReceiveRecoveryResponse, s.ReceiveStartRecovery)
+	go s.CommitBroadcaster()
 	return s
 }
 
@@ -137,27 +139,13 @@ func (s *VR) InitializeService(callback func(op *Operation) (result interface{})
 	s.Upcall = callback
 	s.Log = s.Logger.ReadAll()
 	s.playLogUntil(int64(len(s.Log)))
-	s.StartListeners()
-}
-
-func (s *VR) StartListeners() {
-	go s.PrepareListener()
-	go s.PrepareOKListener()
-	go s.CommitListener()
-	go s.CommitBroadcaster()
-	go s.StartViewChangeListener()
-	go s.DoViewChangeListener()
-	go s.StartViewListener()
-	go s.HeartbeatTimeout()
-	go s.RecoveryListener()
-	go s.RecoveryResponseListener()
-	go s.TestViewChangeListener()
 }
 
 func (s *VR) RequestAsync(op *Operation) <-chan interface{} {
-	log.Printf("Starting to replicate requestId=%v, message=%v from clientID=%v\n", op.RequestID, *op.Message, op.ClientID)
 	s.lock.Lock()
 	defer s.lock.Unlock()
+
+	log.Printf("Starting to replicate requestId=%v, message=%v from clientID=%v\n", op.RequestID, *op.Message, op.ClientID)
 
 	resultChan := make(chan interface{}, 1)
 
@@ -197,79 +185,96 @@ func (s *VR) RequestAsync(op *Operation) <-chan interface{} {
 	return resultChan
 }
 
-func (s *VR) PrepareListener() {
-	for {
-		from, to, op, primaryView, primaryOp, primaryCommit, err := s.Messenger.ReceivePrepare()
+func (s *VR) ReceivePrepare(from int64, to int64, op *Operation, primaryView int64, primaryOp int64, primaryCommit int64) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 
-		// Ignore parsing/transmission error, or out-of-date op
-		if err != nil || primaryOp <= s.OpNumber {
-			continue
-		}
-
-		if primaryView > s.ViewNumber {
-			//If this node also thinks it is a prmary, will do recovery
-			go s.StartRecovery()
-			continue
-		}
-
-		if primaryOp > s.OpNumber+1 {
-			go s.StartRecovery()
-			continue
-		}
-
-		// Out-of-order message
-		if primaryOp != s.OpNumber+1 {
-			continue
-		}
-
-		//TODO: Handle msg from older views
-
-		s.commitUpTo(primaryCommit)
-
-		s.lock.Lock()
-		s.OpNumber++
-		s.ClientTable[op.ClientID] = &ClientTableEntry{Op: op, Processing: true}
-		s.Log = append(s.Log, &LogEntry{s.ViewNumber, s.OpNumber, op, nil})
-		go s.Messenger.SendPrepareOK(to, from, s.ViewNumber, s.OpNumber)
-		s.lock.Unlock()
-
-		s.ResetHeartbeatTimer()
+	if primaryView > s.ViewNumber {
+		//If this node also thinks it is a prmary, will do recovery
+		go s.StartRecovery()
+		return
 	}
+
+	if primaryOp > s.OpNumber+1 {
+		go s.StartRecovery()
+		return
+	}
+
+	// Out-of-order message
+	if primaryOp != s.OpNumber+1 {
+		return
+	}
+
+	//TODO: Handle msg from older views
+
+	s.commitUpTo(primaryCommit)
+
+	s.OpNumber++
+	s.ClientTable[op.ClientID] = &ClientTableEntry{Op: op, Processing: true}
+	s.Log = append(s.Log, &LogEntry{s.ViewNumber, s.OpNumber, op, nil})
+	go s.Messenger.SendPrepareOK(to, from, s.ViewNumber, s.OpNumber)
+
+	s.ResetHeartbeatTimer()
 }
 
-func (s *VR) PrepareOKListener() {
-	for {
-		from, _, _, backupOpNum, err := s.Messenger.ReceivePrepareOK()
-		if err != nil {
-			continue
-		}
+func (s *VR) ReceivePrepareOK(from int64, to int64, backupViewNum int64, backupOpNum int64) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 
-		s.updateReceivedPrepareOK(from, backupOpNum)
-		s.ResetHeartbeatTimer()
+	log.Printf("Received PrepareOK from node %v (OpNumber = %v). Master CommitNumber = %v, OpNumber = %v",
+		from, backupOpNum, s.CommitNumber, s.OpNumber)
+	// Ignore commited operations
+	if backupOpNum <= s.CommitNumber {
+		return
 	}
+
+	// Update table for PrepareOK messages
+	ballot, found := s.PrepareBallotTable[backupOpNum]
+	if !found {
+		return
+	}
+	_, found = ballot[from]
+	if !found {
+		ballot[from] = true
+	}
+
+	// Commit operations agreed by quorum
+	if backupOpNum > s.CommitNumber+1 {
+		return
+	}
+
+	for s.CommitNumber < s.OpNumber {
+		ballot := s.PrepareBallotTable[s.CommitNumber+1]
+		if int64(len(ballot)) >= (s.QuorumSize - 1) {
+			s.CommitNumber = s.executeNextOp()
+			delete(s.PrepareBallotTable, s.CommitNumber)
+		} else {
+			break
+		}
+	}
+
+	log.Printf("Processed PrepareOK")
+
+	s.ResetHeartbeatTimer()
 }
 
-func (s *VR) CommitListener() {
-	for {
-		_, _, primaryView, primaryCommit, err := s.Messenger.ReceiveCommit() //from, to, primaryView
-		if err != nil {
-			continue
-		}
+func (s *VR) ReceiveCommit(from int64, to int64, primaryView int64, primaryCommit int64) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 
-		if primaryView > s.ViewNumber {
-			go s.StartRecovery()
-			continue
-		} else if primaryCommit >= s.CommitNumber+2 {
-			//If fall behind in the same view by more than 2 commit numbers, recover.
-			go s.StartRecovery()
-			continue
-		}
-
-		//TODO: Handle msg from older views
-
-		s.commitUpTo(primaryCommit)
-		s.ResetHeartbeatTimer()
+	if primaryView > s.ViewNumber {
+		go s.StartRecovery()
+		return
+	} else if primaryCommit >= s.CommitNumber+2 {
+		//If fall behind in the same view by more than 2 commit numbers, recover.
+		go s.StartRecovery()
+		return
 	}
+
+	//TODO: Handle msg from older views
+
+	s.commitUpTo(primaryCommit)
+	s.ResetHeartbeatTimer()
 }
 
 func (s *VR) CommitBroadcaster() {
@@ -297,14 +302,6 @@ func (s *VR) getTimerInterval() (interval time.Duration) {
 	return ((time.Millisecond * HEARTBEAT_INTERVAL_MS * VIEWCHANGE_TIMEOUT_MULTIPLE) + (time.Millisecond * time.Duration(randomNum)))
 }
 
-func (s *VR) HeartbeatTimeout() {
-	<-(s.HeartbeatTimer).C
-	if !(s.IsPrimary) {
-		log.Println("Heartbeat timeout")
-		s.ViewChangeTimeout()
-	}
-}
-
 func (s *VR) ResetHeartbeatTimer() {
 	if !(s.IsPrimary) {
 		ret := (s.HeartbeatTimer).Reset(s.getTimerInterval())
@@ -314,31 +311,33 @@ func (s *VR) ResetHeartbeatTimer() {
 	}
 }
 
-func (s *VR) ViewChangeRestartTimeout() {
+func (s *VR) viewChangeRestartTimeout() {
 	<-(s.ViewChangeRestartTimer).C
 	//To allow view change to make progress in case stuck
 	//Restart view change in next view
 	log.Println("View change restart timeout")
-	s.ViewChangeTimeout()
+	s.viewChangeTimeout()
 }
 
-func (s *VR) ViewChangeTimeout() {
+func (s *VR) viewChangeTimeout() {
 	s.lock.Lock()
 	s.TriggerViewNum++
 	s.lock.Unlock()
-	s.StartViewChange(s.TriggerViewNum, true)
+	go s.StartViewChange(s.TriggerViewNum, true)
 }
 
 func (s *VR) StartViewChange(newView int64, isTimerTriggered bool) (err error) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
 	//Initiate view change
 	if s.Status == STATUS_NORMAL && newView > s.ViewNumber {
-		s.lock.Lock()
 		s.Status = STATUS_VIEWCHANGE
 		s.ViewChangeViewNum = newView
 		s.NumOfStartViewChangeRecv++ //Increment for the one sent to ownself
 		s.ViewChangeRestartTimer = time.NewTimer(s.getTimerInterval())
-		go s.ViewChangeRestartTimeout()
-		s.lock.Unlock()
+		go s.viewChangeRestartTimeout()
+
 		log.Println("Start view change for new view number", newView)
 		for _, to := range s.GroupIDs {
 			if to != s.Index {
@@ -346,15 +345,15 @@ func (s *VR) StartViewChange(newView int64, isTimerTriggered bool) (err error) {
 			}
 		}
 
-		s.CheckStartViewChangeQuorum()
+		s.checkStartViewChangeQuorum()
 	} else if s.Status == STATUS_VIEWCHANGE && newView > s.ViewChangeViewNum {
 		//Case where a viewchange for an even later view is triggered
-		s.RestartViewChange(newView, isTimerTriggered)
+		s.restartViewChange(newView, isTimerTriggered)
 		if s.ViewChangeRestartTimer != nil {
 			log.Println("Reset viewchange timer")
 			s.ViewChangeRestartTimer.Stop()
 			s.ViewChangeRestartTimer = time.NewTimer(s.getTimerInterval())
-			go s.ViewChangeRestartTimeout()
+			go s.viewChangeRestartTimeout()
 		} else {
 			log.Println("Error: No restart view change timer found!")
 		}
@@ -362,33 +361,28 @@ func (s *VR) StartViewChange(newView int64, isTimerTriggered bool) (err error) {
 	return nil
 }
 
-func (s *VR) RestartViewChange(newView int64, isTimerTriggered bool) (err error) {
+func (s *VR) restartViewChange(newView int64, isTimerTriggered bool) (err error) {
 	log.Println("Restarting viewchange to view number ", newView)
-	s.ResetViewChangeStates()
-	s.lock.Lock()
+	s.resetViewChangeStates()
 	s.ViewChangeViewNum = newView
-	s.lock.Unlock()
 	log.Println("Start view change for new view number", newView)
 	for _, to := range s.GroupIDs {
 		if to != s.Index {
 			go s.Messenger.SendStartViewChange(s.Index, to, s.ViewChangeViewNum)
 		}
 	}
-	s.lock.Lock()
 	if isTimerTriggered == true {
 		s.NumOfStartViewChangeRecv++ //Increment for the one sent to ownself
 	} else {
 		s.NumOfStartViewChangeRecv = s.NumOfStartViewChangeRecv + 2 //Increment for the one sent to ownself & recv'd
 	}
-	s.lock.Unlock()
-	s.CheckStartViewChangeQuorum()
+	s.checkStartViewChangeQuorum()
 
 	return nil
 }
 
-func (s *VR) ResetViewChangeStates() {
+func (s *VR) resetViewChangeStates() {
 	//Reset all viewchange states
-	s.lock.Lock()
 	s.ViewChangeViewNum = 0
 	s.NumOfStartViewChangeRecv = 0
 	s.NumOfDoViewChangeRecv = 0
@@ -397,101 +391,65 @@ func (s *VR) ResetViewChangeStates() {
 	s.DoViewChangeStatus.BestLogViewNum = -1
 	s.DoViewChangeStatus.LargestCommitNum = -1
 	s.DoViewChangeStatus.BestLogHeard = nil
-	s.lock.Unlock()
 }
 
-func (s *VR) StartViewChangeListener() {
-	for {
-		_, _, newView, err := s.Messenger.ReceiveStartViewChange()
+func (s *VR) ReceiveStartViewChange(from int64, to int64, newView int64) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 
-		if err != nil {
-			continue
-		}
-		if s.Status == STATUS_NORMAL && newView > s.ViewNumber {
-			log.Println("Hear startviewchange msg for first time")
-			s.lock.Lock()
-			s.NumOfStartViewChangeRecv++
-			s.lock.Unlock()
-			s.StartViewChange(newView, false)
-			s.HeartbeatTimer.Stop()
-		} else if (s.Status == STATUS_VIEWCHANGE) && (newView == s.ViewChangeViewNum) {
-			log.Println("Hear startviewchange msg")
-			s.lock.Lock()
-			s.NumOfStartViewChangeRecv++
-			s.lock.Unlock()
-		} else if (s.Status == STATUS_VIEWCHANGE) && (newView > s.ViewChangeViewNum) {
-			s.StartViewChange(newView, false)
-		}
-
-		err = s.CheckStartViewChangeQuorum()
+	if s.Status == STATUS_NORMAL && newView > s.ViewNumber {
+		log.Println("Hear startviewchange msg for first time")
+		s.NumOfStartViewChangeRecv++
+		go s.StartViewChange(newView, false)
+		s.HeartbeatTimer.Stop()
+	} else if (s.Status == STATUS_VIEWCHANGE) && (newView == s.ViewChangeViewNum) {
+		log.Println("Hear startviewchange msg")
+		s.NumOfStartViewChangeRecv++
+	} else if (s.Status == STATUS_VIEWCHANGE) && (newView > s.ViewChangeViewNum) {
+		go s.StartViewChange(newView, false)
 	}
 
+	s.checkStartViewChangeQuorum()
 }
 
-func (s *VR) CheckStartViewChangeQuorum() (err error) {
-	if s.NumOfStartViewChangeRecv >= s.QuorumSize && !(s.DoViewChangeSent) {
-		i := s.ViewChangeViewNum % int64(len(s.GroupIDs)) //New leader index
-		go s.Messenger.SendDoViewChange(s.Index, int64(i), s.ViewChangeViewNum, s.ViewNumber, s.Log, s.OpNumber, s.CommitNumber)
+func (s *VR) ReceiveDoViewChange(from int64, to int64, recvNewView int64, recvOldView int64, recvLog []*LogEntry, recvOpNum int64, recvCommitNum int64) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 
-		log.Println("Got quorum for startviewchange msg. Sent doviewchange to new primary - node ", i)
-		s.lock.Lock()
-		s.DoViewChangeSent = true
-		s.lock.Unlock()
+	log.Println("Recv DoViewChange msg")
+
+	//Initiate view change if not in viewchange mode
+	if s.Status == STATUS_NORMAL && recvNewView > s.ViewNumber {
+		go s.StartViewChange(recvNewView, false)
 	}
-	return nil
-}
 
-func (s *VR) CheckDoViewChangeQuorum() (err error) {
-	if s.NumOfDoViewChangeRecv >= s.QuorumSize {
-		err := s.StartView()
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *VR) DoViewChangeListener() {
-	for {
-		from, _, recvNewView, recvOldView, recvLog, recvOpNum, recvCommitNum, err := s.Messenger.ReceiveDoViewChange()
-		if err != nil {
-			continue
-		}
-		log.Println("Recv DoViewChange msg")
-
-		//Initiate view change if not in viewchange mode
-		if s.Status == STATUS_NORMAL && recvNewView > s.ViewNumber {
-			err = s.StartViewChange(recvNewView, false)
+	//Increment number of DoViewChange msg recvd
+	if s.Status == STATUS_VIEWCHANGE && s.ViewChangeViewNum == recvNewView {
+		s.NumOfDoViewChangeRecv++
+		//Store logs if it is more updated than any logs previously heard
+		//Check log view number and op number
+		if (recvOldView > s.DoViewChangeStatus.BestLogViewNum) || (recvOldView == s.DoViewChangeStatus.BestLogViewNum && recvOpNum > s.DoViewChangeStatus.BestLogOpNum) {
+			s.DoViewChangeStatus.BestLogOpNum = recvOpNum
+			s.DoViewChangeStatus.BestLogViewNum = recvOldView
+			s.DoViewChangeStatus.BestLogHeard = recvLog
+			log.Println("Hear better log from node ", from)
 		}
 
-		//Increment number of DoViewChange msg recvd
-		if s.Status == STATUS_VIEWCHANGE && s.ViewChangeViewNum == recvNewView {
-			s.NumOfDoViewChangeRecv++
-			//Store logs if it is more updated than any logs previously heard
-			//Check log view number and op number
-			if (recvOldView > s.DoViewChangeStatus.BestLogViewNum) || (recvOldView == s.DoViewChangeStatus.BestLogViewNum && recvOpNum > s.DoViewChangeStatus.BestLogOpNum) {
-				s.lock.Lock()
-				s.DoViewChangeStatus.BestLogOpNum = recvOpNum
-				s.DoViewChangeStatus.BestLogViewNum = recvOldView
-				s.DoViewChangeStatus.BestLogHeard = recvLog
-				s.lock.Unlock()
-				log.Println("Hear better log from node ", from)
-			}
+		if recvCommitNum > s.DoViewChangeStatus.LargestCommitNum {
+			s.DoViewChangeStatus.LargestCommitNum = recvCommitNum
+		}
 
-			if recvCommitNum > s.DoViewChangeStatus.LargestCommitNum {
-				s.lock.Lock()
-				s.DoViewChangeStatus.LargestCommitNum = recvCommitNum
-				s.lock.Unlock()
-			}
-
-			s.CheckDoViewChangeQuorum()
+		if s.NumOfDoViewChangeRecv >= s.QuorumSize {
+			go s.StartView()
 		}
 	}
 }
 
-func (s *VR) StartView() (err error) {
+func (s *VR) StartView() {
 	//New primary sets own states for new view
 	s.lock.Lock()
+	defer s.lock.Unlock()
+
 	s.Log = s.DoViewChangeStatus.BestLogHeard
 	s.ViewNumber = s.ViewChangeViewNum
 	s.TriggerViewNum = s.ViewNumber
@@ -501,8 +459,7 @@ func (s *VR) StartView() (err error) {
 	s.IsPrimary = true
 	s.ViewChangeRestartTimer.Stop()
 	s.ViewChangeRestartTimer = nil
-	s.lock.Unlock()
-	s.ResetViewChangeStates()
+	s.resetViewChangeStates()
 	for _, to := range s.GroupIDs {
 		if to != s.Index {
 			go s.Messenger.SendStartView(s.Index, to, s.ViewNumber, s.Log, s.OpNumber, s.CommitNumber)
@@ -514,47 +471,42 @@ func (s *VR) StartView() (err error) {
 
 	log.Println("Got quorum for doviewchange msg. Sent startview")
 	log.Println("This is the NEW PRIMARY. New view number: ", s.ViewNumber)
-
-	return nil
 }
 
-func (s *VR) StartViewListener() {
-	for {
-		from, _, recvNewView, recvLog, recvOpNum, _, err := s.Messenger.ReceiveStartView()
-		if err != nil {
-			continue
-		}
-		s.lock.Lock()
-		s.OpNumber = recvOpNum
-		s.ViewNumber = recvNewView
-		s.TriggerViewNum = recvNewView
-		s.Log = recvLog
-		s.Status = STATUS_NORMAL
-		s.IsPrimary = false
-		s.HeartbeatTimer = time.NewTimer(s.getTimerInterval())
-		s.ViewChangeRestartTimer.Stop()
-		s.ViewChangeRestartTimer = nil
-		s.lock.Unlock()
+func (s *VR) ReceiveStartView(from int64, to int64, recvNewView int64, recvLog []*LogEntry, recvOpNum int64, recvCommitNum int64) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 
-		//TODO: Send prepareok for all non-committed operations
-		//TODO: Execute committed operations that have not previously been commited at this node i.e. commit up till recvCommitNum
-		//TODO: Update client table if needed
+	s.ViewNumber = recvNewView
+	s.TriggerViewNum = recvNewView
+	s.OpNumber = recvOpNum
+	s.Log = recvLog
+	s.Status = STATUS_NORMAL
+	s.IsPrimary = false
+	s.HeartbeatTimer = time.NewTimer(s.getTimerInterval())
+	s.ViewChangeRestartTimer.Stop()
+	s.ViewChangeRestartTimer = nil
 
-		s.ResetViewChangeStates()
+	//TODO: Send prepareok for all non-committed operations
+	//TODO: Execute committed operations that have not previously been commited at this node i.e. commit up till recvCommitNum
+	//TODO: Update client table if needed
 
-		log.Println("Received start view from new primary - node ", from)
-		log.Println("New view number: ", s.ViewNumber)
-	}
+	s.resetViewChangeStates()
+
+	log.Println("Received start view from new primary - node ", from)
+	log.Println("New view number: ", s.ViewNumber)
 }
 
-func (s *VR) TestViewChangeListener() {
-	for {
-		_, err := s.Messenger.ReceiveTestViewChange()
-		if err != nil {
-			continue
-		}
+func (s *VR) ReceiveStartRecovery() {
+	go s.StartRecovery()
+}
 
-		s.StartRecovery()
+func (s *VR) checkStartViewChangeQuorum() {
+	if s.NumOfStartViewChangeRecv >= s.QuorumSize && !(s.DoViewChangeSent) {
+		i := s.ViewChangeViewNum % int64(len(s.GroupIDs)) //New leader index
+		go s.Messenger.SendDoViewChange(s.Index, int64(i), s.ViewChangeViewNum, s.ViewNumber, s.Log, s.OpNumber, s.CommitNumber)
+		log.Println("Got quorum for startviewchange msg. Sent doviewchange to new primary - node ", i)
+		s.DoViewChangeSent = true
 	}
 }
 
@@ -563,14 +515,16 @@ func (s *VR) TestViewChangeListener() {
 //------------ Start of recovery functions -------------
 
 func (s *VR) StartRecovery() {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
 	if s.Status != STATUS_RECOVERY {
-		s.lock.Lock()
 		s.Status = STATUS_RECOVERY
 		s.RecoveryStatus.RecoveryNonce = rand.Int63()
 		s.IsPrimary = false //TODO: Check if it is correct to switch to 0 here
 		s.RecoveryStatus.RecoveryRestartTimer = time.NewTimer(s.getTimerInterval())
 		go s.RestartRecovery()
-		s.lock.Unlock()
+
 		log.Println("Start recovery protocol")
 		for _, to := range s.GroupIDs {
 			if to != s.Index {
@@ -582,14 +536,17 @@ func (s *VR) StartRecovery() {
 
 func (s *VR) RestartRecovery() {
 	<-(s.RecoveryStatus.RecoveryRestartTimer).C
-	s.ResetRecoveryStatus()
+
 	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	s.resetRecoveryStatus()
 	s.Status = STATUS_RECOVERY
 	s.RecoveryStatus.RecoveryNonce = rand.Int63()
 	s.IsPrimary = false //TODO: Check if it is correct to switch to 0 here
 	s.RecoveryStatus.RecoveryRestartTimer = time.NewTimer(s.getTimerInterval())
 	go s.RestartRecovery()
-	s.lock.Unlock()
+
 	log.Println("Restarting recovery protocol")
 	for _, to := range s.GroupIDs {
 		if to != s.Index {
@@ -598,97 +555,81 @@ func (s *VR) RestartRecovery() {
 	}
 }
 
-func (s *VR) RecoveryListener() {
-	for {
-		from, _, nonce, lastCommitNum, err := s.Messenger.ReceiveRecovery()
-		if err != nil {
-			continue
-		}
-		if s.Status == STATUS_NORMAL {
-			log.Println("Received a recovery request from node ", from)
-			if s.IsPrimary {
-				s.Messenger.SendRecoveryResponse(s.Index, from, s.ViewNumber, nonce, s.Log[lastCommitNum+1:], s.OpNumber, s.CommitNumber, s.IsPrimary)
-			} else {
-				s.Messenger.SendRecoveryResponse(s.Index, from, s.ViewNumber, nonce, nil, -1, -1, s.IsPrimary)
-			}
+func (s *VR) ReceiveRecovery(from int64, to int64, nonce int64, lastCommitNum int64) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	if s.Status == STATUS_NORMAL {
+		log.Println("Received a recovery request from node ", from)
+		if s.IsPrimary && s.Log != nil {
+			go s.Messenger.SendRecoveryResponse(s.Index, from, s.ViewNumber, nonce, s.Log[lastCommitNum+1:], s.OpNumber, s.CommitNumber, s.IsPrimary)
+		} else {
+			go s.Messenger.SendRecoveryResponse(s.Index, from, s.ViewNumber, nonce, nil, -1, -1, s.IsPrimary)
 		}
 	}
 }
 
-func (s *VR) RecoveryResponseListener() {
-	for {
-		from, _, recvViewNum, recvNonce, recvLog, recvOpNum, recvCommitNum, recvIsPrimary, err := s.Messenger.ReceiveRecoveryResponse()
-		if err != nil {
-			continue
-		}
+func (s *VR) ReceiveRecoveryResponse(from int64, to int64, recvViewNum int64, recvNonce int64, recvLog []*LogEntry,
+	recvOpNum int64, recvCommitNum int64, recvIsPrimary bool) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 
-		if s.Status == STATUS_RECOVERY {
-			if recvNonce == s.RecoveryStatus.RecoveryNonce {
-				log.Println("Received recovery response from node ", from)
-				s.lock.Lock()
-				s.RecoveryStatus.NumOfRecoveryRspRecv++
-				if recvViewNum > s.RecoveryStatus.LargestViewSeen {
-					s.RecoveryStatus.LargestViewSeen = recvViewNum
+	if s.Status == STATUS_RECOVERY {
+		if recvNonce == s.RecoveryStatus.RecoveryNonce {
+			log.Println("Received recovery response from node ", from)
+
+			s.RecoveryStatus.NumOfRecoveryRspRecv++
+			if recvViewNum > s.RecoveryStatus.LargestViewSeen {
+				s.RecoveryStatus.LargestViewSeen = recvViewNum
+			}
+			if recvIsPrimary == true {
+				log.Printf("Received recovery log from primary %v, length = %v, ViewNumber = %v, OpNumber = %v, CommitNumber = %v",
+					from, len(recvLog), recvViewNum, recvOpNum, recvCommitNum)
+				if s.RecoveryStatus.PrimaryViewNum < recvViewNum {
+					s.RecoveryStatus.LogRecv = recvLog
+					s.RecoveryStatus.PrimaryViewNum = recvViewNum
+					s.RecoveryStatus.PrimaryId = from
+					s.RecoveryStatus.PrimaryCommitNum = recvCommitNum
+					s.RecoveryStatus.PrimaryOpNum = recvOpNum
+					log.Println("Recovery log heard is best so far")
 				}
-				if recvIsPrimary == true {
-					log.Printf("Received recovery log from primary %v, length = %v, ViewNumber = %v, OpNumber = %v, CommitNumber = %v", 
-						from, len(recvLog), recvViewNum, recvOpNum, recvCommitNum)
-					if s.RecoveryStatus.PrimaryViewNum < recvViewNum {
-						s.RecoveryStatus.LogRecv = recvLog
-						s.RecoveryStatus.PrimaryViewNum = recvViewNum
-						s.RecoveryStatus.PrimaryId = from
-						s.RecoveryStatus.PrimaryCommitNum = recvCommitNum
-						s.RecoveryStatus.PrimaryOpNum = recvOpNum
-						log.Println("Recovery log heard is best so far")
-					}
-				}
-				s.lock.Unlock()
-				if s.CheckRecoveryResponseQuorum() == true {
-					if s.RecoveryStatus.PrimaryViewNum == s.RecoveryStatus.LargestViewSeen {
-						s.lock.Lock()
-						if s.Log == nil {
-							s.Log = s.RecoveryStatus.LogRecv
-						} else {
-							// Cancel uncommitted operations
-							for i := s.CommitNumber+1; i < int64(len(s.Log)); i++ {
-								if s.Log[i].ResultChan != nil {
-									*s.Log[i].ResultChan <- errors.New("Error: View changed. Operation canceled.")
-								}
+			}
+
+			if s.RecoveryStatus.NumOfRecoveryRspRecv >= s.QuorumSize {
+				if s.RecoveryStatus.PrimaryViewNum == s.RecoveryStatus.LargestViewSeen {
+					if s.Log == nil {
+						s.Log = s.RecoveryStatus.LogRecv
+					} else {
+						// Cancel uncommitted operations
+						for i := s.CommitNumber + 1; i < int64(len(s.Log)); i++ {
+							if s.Log[i].ResultChan != nil {
+								*s.Log[i].ResultChan <- errors.New("Error: View changed. Operation canceled.")
 							}
-							// Append received updates to log
-							s.Log = append(s.Log[:s.CommitNumber+1], s.RecoveryStatus.LogRecv...)
 						}
-
-						s.ViewNumber = s.RecoveryStatus.PrimaryViewNum
-						s.OpNumber = s.RecoveryStatus.PrimaryOpNum
-						s.playLogUntil(s.RecoveryStatus.PrimaryCommitNum + 1)
-
-						s.Status = STATUS_NORMAL
-						s.lock.Unlock()
-
-						(s.RecoveryStatus.RecoveryRestartTimer).Stop()
-						s.ResetRecoveryStatus()
-						log.Println("Recovery success. Updated to view number ", s.ViewNumber)
+						// Append received updates to log
+						s.Log = append(s.Log[:s.CommitNumber+1], s.RecoveryStatus.LogRecv...)
 					}
+
+					s.ViewNumber = s.RecoveryStatus.PrimaryViewNum
+					s.OpNumber = s.RecoveryStatus.PrimaryOpNum
+					s.playLogUntil(s.RecoveryStatus.PrimaryCommitNum + 1)
+
+					s.Status = STATUS_NORMAL
+
+					(s.RecoveryStatus.RecoveryRestartTimer).Stop()
+					s.resetRecoveryStatus()
+					log.Println("Recovery success. Updated to view number ", s.ViewNumber)
 				}
-			} else {
-				log.Println("Received an invalid recovery nonce")
 			}
 		} else {
-			log.Println("Received a recovery response when not in recovery mode")
+			log.Println("Received an invalid recovery nonce")
 		}
+	} else {
+		log.Println("Received a recovery response when not in recovery mode")
 	}
 }
 
-func (s *VR) CheckRecoveryResponseQuorum() (success bool) {
-	if s.RecoveryStatus.NumOfRecoveryRspRecv >= s.QuorumSize {
-		return true
-	}
-	return false
-}
-
-func (s *VR) ResetRecoveryStatus() {
-	s.lock.Lock()
+func (s *VR) resetRecoveryStatus() {
 	s.RecoveryStatus.LargestViewSeen = -1
 	s.RecoveryStatus.NumOfRecoveryRspRecv = 0
 	s.RecoveryStatus.PrimaryCommitNum = -1
@@ -697,7 +638,6 @@ func (s *VR) ResetRecoveryStatus() {
 	s.RecoveryStatus.PrimaryViewNum = -2
 	s.RecoveryStatus.RecoveryNonce = 0
 	s.RecoveryStatus.LogRecv = nil
-	s.lock.Unlock()
 }
 
 //------------ End of recovery functions -------------
@@ -733,45 +673,6 @@ func (s *VR) playLogUntil(end int64) {
 
 	s.ViewNumber = s.Log[end-1].ViewNumber
 	s.OpNumber = s.Log[end-1].OpNumber
-}
-
-func (s *VR) updateReceivedPrepareOK(from int64, backupOpNum int64) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-	log.Printf("Received PrepareOK from node %v (OpNumber = %v). Master CommitNumber = %v, OpNumber = %v",
-		from, backupOpNum, s.CommitNumber, s.OpNumber)
-	// Ignore commited operations
-	if backupOpNum <= s.CommitNumber {
-		return
-	}
-
-	// Update table for PrepareOK messages
-	ballot, found := s.PrepareBallotTable[backupOpNum]
-	if !found {
-		return
-	}
-	_, found = ballot[from]
-	if !found {
-		ballot[from] = true
-	}
-
-	// Commit operations agreed by quorum
-	if backupOpNum > s.CommitNumber+1 {
-		return
-	}
-
-	for s.CommitNumber < s.OpNumber {
-		ballot := s.PrepareBallotTable[s.CommitNumber+1]
-		if int64(len(ballot)) >= (s.QuorumSize - 1) {
-			s.CommitNumber = s.executeNextOp()
-			delete(s.PrepareBallotTable, s.CommitNumber)
-		} else {
-			break
-		}
-	}
-
-	log.Printf("Processed PrepareOK")
-	return
 }
 
 func (s *VR) commitUpTo(primaryCommit int64) {

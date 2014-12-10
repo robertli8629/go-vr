@@ -66,7 +66,7 @@ func Start() {
 		peerUris[i] = "http://127.0.0.1:" + peerPorts[i]
 	}
 
-	messenger := vr.NewJsonMessenger(":" + peerPorts[int64(id)], peerUris)
+	messenger := vr.NewJsonMessenger(":"+peerPorts[int64(id)], peerUris)
 
 	appendOnly := true
 	if argSize >= 2 && argsWithoutProg[1] == "coldstart" {
