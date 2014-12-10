@@ -43,7 +43,6 @@ type Messenger interface {
 type Logger interface {
 	Append(entry *LogEntry) (err error)
 	ReadAll() (log []*LogEntry)
-	ReplaceWith(log []*LogEntry) (err error)
 }
 
 type Operation struct {

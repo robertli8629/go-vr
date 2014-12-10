@@ -10,6 +10,7 @@ import (
 
 type JsonLogger struct {
 	logfile *os.File
+	writer  *bufio.Writer
 	encoder *json.Encoder
 	lock    *sync.Mutex
 }
@@ -30,13 +31,16 @@ func NewJsonLogger(filename *string, appendOnly bool) (logger *JsonLogger) {
 		panic(err)
 	}
 
-	return &JsonLogger{logfile: logfile, encoder: json.NewEncoder(bufio.NewWriter(logfile)), lock: new(sync.Mutex)}
+	writer := bufio.NewWriter(logfile)
+	return &JsonLogger{logfile: logfile, writer: writer, encoder: json.NewEncoder(writer), lock: new(sync.Mutex)}
 }
 
 func (s *JsonLogger) Append(entry *LogEntry) (err error) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	return s.encoder.Encode(entry)
+	err = s.encoder.Encode(entry)
+	go s.writer.Flush()
+	return err
 }
 
 func (s *JsonLogger) ReadAll() (logs []*LogEntry) {
@@ -62,23 +66,4 @@ func (s *JsonLogger) ReadAll() (logs []*LogEntry) {
 	s.logfile.Seek(0, 2)
 
 	return logs
-}
-
-func (s *JsonLogger) ReplaceWith(log []*LogEntry) (err error) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-
-	err = s.logfile.Truncate(0)
-	if err != nil {
-		return err
-	}
-
-	for _, l := range log {
-		err = s.encoder.Encode(l)
-		if err != nil {
-			return
-		}
-	}
-
-	return nil
 }
