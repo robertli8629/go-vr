@@ -129,6 +129,7 @@ func NewVR(isPrimary bool, index int64, messenger Messenger, logger Logger, ids 
 	s.Messenger.RegisterReceiveCallback(s.ReceivePrepare, s.ReceivePrepareOK, s.ReceiveCommit, s.ReceiveStartViewChange,
 		s.ReceiveDoViewChange, s.ReceiveStartView, s.ReceiveRecovery, s.ReceiveRecoveryResponse, s.ReceiveStartRecovery)
 	go s.CommitBroadcaster()
+	go s.HeartbeatTimeout()
 	return s
 }
 
@@ -293,7 +294,13 @@ func (s *VR) CommitBroadcaster() {
 }
 
 //------------ Start of viewchange functions -------------
-
+func (s *VR) HeartbeatTimeout() {
+	<-(s.HeartbeatTimer).C
+	if !(s.IsPrimary) {
+		log.Println("Heartbeat timeout")
+		s.viewChangeTimeout()
+	}
+}
 func (s *VR) getTimerInterval() (interval time.Duration) {
 	//Randomize the timeout by adding 0 to 100ms to avoid all replicas timing out at same time
 	randomNum := rand.Int() % 100
@@ -483,6 +490,7 @@ func (s *VR) ReceiveStartView(from int64, to int64, recvNewView int64, recvLog [
 	s.Status = STATUS_NORMAL
 	s.IsPrimary = false
 	s.HeartbeatTimer = time.NewTimer(s.getTimerInterval())
+	go s.HeartbeatTimeout()
 	s.ViewChangeRestartTimer.Stop()
 	s.ViewChangeRestartTimer = nil
 
