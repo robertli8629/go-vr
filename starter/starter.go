@@ -38,8 +38,7 @@ func read_config() (servers []string, peers []string) {
 }
 
 func Start() {
-
-	servers, peers := read_config()
+	serverPorts, peerPorts := read_config()
 	argsWithoutProg := os.Args[1:]
 	argSize := len(argsWithoutProg)
 
@@ -51,10 +50,7 @@ func Start() {
 	if err != nil {
 		panic(err)
 	}
-	//id64 = int64(id)
 	log.Println("Id:", id)
-
-	serverPort, peerPort := servers[id], peers[id]
 
 	isPrimary := id == 0
 	if isPrimary {
@@ -63,30 +59,27 @@ func Start() {
 		log.Println("This is REPLICA")
 	}
 
-	messenger := vr.NewJsonMessenger(peerPort)
-
-	//uri := []string{}
 	ids := []int64{}
-	uris := map[int64]string{}
-	for i := int64(0); i < int64(len(peers)); i++ {
-		//uri = append(uri, "http://127.0.0.1:"+peers[i])
+	peerUris := map[int64]string{}
+	for i := int64(0); i < int64(len(peerPorts)); i++ {
 		ids = append(ids, i)
-		uris[i] = "http://127.0.0.1:" + peers[i]
+		peerUris[i] = "http://127.0.0.1:" + peerPorts[i]
 	}
 
-	filename := "logs" + idStr
+	messenger := vr.NewJsonMessenger(":" + peerPorts[int64(id)], peerUris)
 
 	appendOnly := true
 	if argSize >= 2 && argsWithoutProg[1] == "coldstart" {
-		log.Println("initializing log")
 		appendOnly = false
 	}
 
+	filename := "logs" + idStr
 	logger := vr.NewJsonLogger(&filename, appendOnly)
+
 	// Using same id for VR and KV for convenience only
-	replication := vr.NewVR(isPrimary, int64(id), messenger, logger, ids, uris)
+	replication := vr.NewVR(isPrimary, int64(id), messenger, logger, ids)
 	store := kv.NewKVStore(int64(id), replication)
-	server.NewServer(serverPort, store)
+	server.NewServer(serverPorts[id], store)
 
 	// test log replay
 	//ls, _, _ := logging.Read_from_log(replication.Log_struct.Filename)

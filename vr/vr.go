@@ -18,19 +18,19 @@ const HEARTBEAT_INTERVAL_MS = 5000
 const VIEWCHANGE_TIMEOUT_MULTIPLE = 2 //Viewchange start in multiple of heartbeat interval
 
 type Messenger interface {
-	SendPrepare(uri string, from int64, to int64, op *Operation, primaryView int64, primaryOp int64, primaryCommit int64) (err error)
-	SendPrepareOK(uri string, from int64, to int64, backupView int64, backupOp int64) (err error)
-	SendCommit(uri string, from int64, to int64, primaryView int64, primaryCommit int64) (err error)
+	SendPrepare(from int64, to int64, op *Operation, primaryView int64, primaryOp int64, primaryCommit int64) (err error)
+	SendPrepareOK(from int64, to int64, backupView int64, backupOp int64) (err error)
+	SendCommit(from int64, to int64, primaryView int64, primaryCommit int64) (err error)
 	ReceivePrepare() (from int64, to int64, op *Operation, primaryView int64, primaryOp int64, primaryCommit int64, err error)
 	ReceivePrepareOK() (from int64, to int64, backupView int64, backupOp int64, err error)
 	ReceiveCommit() (from int64, to int64, primaryView int64, primaryCommit int64, err error)
 
-	SendStartViewChange(uri string, from int64, to int64, newView int64) (err error)
-	SendDoViewChange(uri string, from int64, to int64, newView int64, oldView int64, log []*LogEntry, opNum int64,
+	SendStartViewChange(from int64, to int64, newView int64) (err error)
+	SendDoViewChange(from int64, to int64, newView int64, oldView int64, log []*LogEntry, opNum int64,
 		commitNum int64) (err error)
-	SendStartView(uri string, from int64, to int64, newView int64, log []*LogEntry, opNum int64, commitNum int64) (err error)
-	SendRecovery(uri string, from int64, to int64, nonce int64, lastCommitNum int64) (err error)
-	SendRecoveryResponse(uri string, from int64, to int64, viewNum int64, nonce int64, log []*LogEntry, opNum int64, commitNum int64, isPrimary bool) (err error)
+	SendStartView(from int64, to int64, newView int64, log []*LogEntry, opNum int64, commitNum int64) (err error)
+	SendRecovery(from int64, to int64, nonce int64, lastCommitNum int64) (err error)
+	SendRecoveryResponse(from int64, to int64, viewNum int64, nonce int64, log []*LogEntry, opNum int64, commitNum int64, isPrimary bool) (err error)
 
 	ReceiveStartViewChange() (from int64, to int64, newView int64, err error)
 	ReceiveDoViewChange() (from int64, to int64, newView int64, oldView int64, log []*LogEntry, opNum int64, commitNum int64, err error)
@@ -57,12 +57,12 @@ type LogEntry struct {
 	ViewNumber int64
 	OpNumber   int64
 	Op         *Operation
+	ResultChan *chan interface{} `json:"-"`
 }
 
 type ClientTableEntry struct {
 	Op         *Operation
 	Processing bool
-	ResultChan *chan interface{}
 	Result     interface{}
 }
 
@@ -87,7 +87,6 @@ type RecoveryStore struct {
 
 type VR struct {
 	GroupIDs           []int64
-	GroupUris          map[int64]string
 	QuorumSize         int64
 	Index              int64
 	ViewNumber         int64
@@ -117,9 +116,9 @@ type VR struct {
 	lock           *sync.RWMutex
 }
 
-func NewVR(isPrimary bool, index int64, messenger Messenger, logger Logger, ids []int64, uris map[int64]string) (s *VR) {
+func NewVR(isPrimary bool, index int64, messenger Messenger, logger Logger, ids []int64) (s *VR) {
 	s = &VR{IsPrimary: isPrimary, Index: index, OpNumber: -1, CommitNumber: -1, Messenger: messenger, Logger: logger,
-		GroupIDs: ids, GroupUris: uris, DoViewChangeSent: false, ViewChangeRestartTimer: nil}
+		GroupIDs: ids, DoViewChangeSent: false, ViewChangeRestartTimer: nil}
 	s.ClientTable = map[int64]*ClientTableEntry{}
 	s.PrepareBallotTable = map[int64]map[int64]bool{}
 	s.QuorumSize = int64(len(s.GroupIDs)/2 + 1)
@@ -184,13 +183,13 @@ func (s *VR) RequestAsync(op *Operation) <-chan interface{} {
 	}
 
 	s.OpNumber++
-	s.ClientTable[op.ClientID] = &ClientTableEntry{Op: op, Processing: true, ResultChan: &resultChan}
+	s.ClientTable[op.ClientID] = &ClientTableEntry{Op: op, Processing: true}
 	s.PrepareBallotTable[s.OpNumber] = map[int64]bool{}
-	s.Log = append(s.Log, &LogEntry{s.ViewNumber, s.OpNumber, op})
+	s.Log = append(s.Log, &LogEntry{s.ViewNumber, s.OpNumber, op, &resultChan})
 
-	for i, uri := range s.GroupUris {
-		if int64(i) != s.Index {
-			go s.Messenger.SendPrepare(uri, s.Index, int64(i), op, s.ViewNumber, s.OpNumber, s.CommitNumber)
+	for _, to := range s.GroupIDs {
+		if to != s.Index {
+			go s.Messenger.SendPrepare(s.Index, to, op, s.ViewNumber, s.OpNumber, s.CommitNumber)
 		}
 	}
 	log.Println("Finished sending Prepare messages")
@@ -230,8 +229,8 @@ func (s *VR) PrepareListener() {
 		s.lock.Lock()
 		s.OpNumber++
 		s.ClientTable[op.ClientID] = &ClientTableEntry{Op: op, Processing: true}
-		s.Log = append(s.Log, &LogEntry{s.ViewNumber, s.OpNumber, op})
-		go s.Messenger.SendPrepareOK(s.GroupUris[from], to, from, s.ViewNumber, s.OpNumber)
+		s.Log = append(s.Log, &LogEntry{s.ViewNumber, s.OpNumber, op, nil})
+		go s.Messenger.SendPrepareOK(to, from, s.ViewNumber, s.OpNumber)
 		s.lock.Unlock()
 
 		s.ResetHeartbeatTimer()
@@ -279,9 +278,9 @@ func (s *VR) CommitBroadcaster() {
 		<-ticker.C
 		s.lock.RLock()
 		if s.IsPrimary {
-			for i, uri := range s.GroupUris {
-				if int64(i) != s.Index {
-					go s.Messenger.SendCommit(uri, s.Index, int64(i), s.ViewNumber, s.CommitNumber)
+			for _, to := range s.GroupIDs {
+				if to != s.Index {
+					go s.Messenger.SendCommit(s.Index, to, s.ViewNumber, s.CommitNumber)
 				}
 			}
 		}
@@ -341,9 +340,9 @@ func (s *VR) StartViewChange(newView int64, isTimerTriggered bool) (err error) {
 		go s.ViewChangeRestartTimeout()
 		s.lock.Unlock()
 		log.Println("Start view change for new view number", newView)
-		for i, uri := range s.GroupUris {
-			if int64(i) != s.Index {
-				go s.Messenger.SendStartViewChange(uri, s.Index, int64(i), s.ViewChangeViewNum)
+		for _, to := range s.GroupIDs {
+			if to != s.Index {
+				go s.Messenger.SendStartViewChange(s.Index, to, s.ViewChangeViewNum)
 			}
 		}
 
@@ -370,9 +369,9 @@ func (s *VR) RestartViewChange(newView int64, isTimerTriggered bool) (err error)
 	s.ViewChangeViewNum = newView
 	s.lock.Unlock()
 	log.Println("Start view change for new view number", newView)
-	for i, uri := range s.GroupUris {
-		if int64(i) != s.Index {
-			go s.Messenger.SendStartViewChange(uri, s.Index, int64(i), s.ViewChangeViewNum)
+	for _, to := range s.GroupIDs {
+		if to != s.Index {
+			go s.Messenger.SendStartViewChange(s.Index, to, s.ViewChangeViewNum)
 		}
 	}
 	s.lock.Lock()
@@ -431,10 +430,8 @@ func (s *VR) StartViewChangeListener() {
 
 func (s *VR) CheckStartViewChangeQuorum() (err error) {
 	if s.NumOfStartViewChangeRecv >= s.QuorumSize && !(s.DoViewChangeSent) {
-		i := s.ViewChangeViewNum % int64(len(s.GroupUris)) //New leader index
-		uri := s.GroupUris[i]
-
-		go s.Messenger.SendDoViewChange(uri, s.Index, int64(i), s.ViewChangeViewNum, s.ViewNumber, s.Log, s.OpNumber, s.CommitNumber)
+		i := s.ViewChangeViewNum % int64(len(s.GroupIDs)) //New leader index
+		go s.Messenger.SendDoViewChange(s.Index, int64(i), s.ViewChangeViewNum, s.ViewNumber, s.Log, s.OpNumber, s.CommitNumber)
 
 		log.Println("Got quorum for startviewchange msg. Sent doviewchange to new primary - node ", i)
 		s.lock.Lock()
@@ -506,9 +503,9 @@ func (s *VR) StartView() (err error) {
 	s.ViewChangeRestartTimer = nil
 	s.lock.Unlock()
 	s.ResetViewChangeStates()
-	for i, uri := range s.GroupUris {
-		if int64(i) != s.Index {
-			go s.Messenger.SendStartView(uri, s.Index, int64(i), s.ViewNumber, s.Log, s.OpNumber, s.CommitNumber)
+	for _, to := range s.GroupIDs {
+		if to != s.Index {
+			go s.Messenger.SendStartView(s.Index, to, s.ViewNumber, s.Log, s.OpNumber, s.CommitNumber)
 		}
 	}
 
@@ -575,9 +572,9 @@ func (s *VR) StartRecovery() {
 		go s.RestartRecovery()
 		s.lock.Unlock()
 		log.Println("Start recovery protocol")
-		for i, uri := range s.GroupUris {
-			if int64(i) != s.Index {
-				go s.Messenger.SendRecovery(uri, s.Index, int64(i), s.RecoveryStatus.RecoveryNonce, s.CommitNumber)
+		for _, to := range s.GroupIDs {
+			if to != s.Index {
+				go s.Messenger.SendRecovery(s.Index, to, s.RecoveryStatus.RecoveryNonce, s.CommitNumber)
 			}
 		}
 	}
@@ -594,9 +591,9 @@ func (s *VR) RestartRecovery() {
 	go s.RestartRecovery()
 	s.lock.Unlock()
 	log.Println("Restarting recovery protocol")
-	for i, uri := range s.GroupUris {
-		if int64(i) != s.Index {
-			go s.Messenger.SendRecovery(uri, s.Index, int64(i), s.RecoveryStatus.RecoveryNonce, s.CommitNumber)
+	for _, to := range s.GroupIDs {
+		if to != s.Index {
+			go s.Messenger.SendRecovery(s.Index, to, s.RecoveryStatus.RecoveryNonce, s.CommitNumber)
 		}
 	}
 }
@@ -609,11 +606,10 @@ func (s *VR) RecoveryListener() {
 		}
 		if s.Status == STATUS_NORMAL {
 			log.Println("Received a recovery request from node ", from)
-			uri := s.GroupUris[from]
 			if s.IsPrimary {
-				s.Messenger.SendRecoveryResponse(uri, s.Index, from, s.ViewNumber, nonce, s.Log[lastCommitNum+1:], s.OpNumber, s.CommitNumber, s.IsPrimary)
+				s.Messenger.SendRecoveryResponse(s.Index, from, s.ViewNumber, nonce, s.Log[lastCommitNum+1:], s.OpNumber, s.CommitNumber, s.IsPrimary)
 			} else {
-				s.Messenger.SendRecoveryResponse(uri, s.Index, from, s.ViewNumber, nonce, nil, -1, -1, s.IsPrimary)
+				s.Messenger.SendRecoveryResponse(s.Index, from, s.ViewNumber, nonce, nil, -1, -1, s.IsPrimary)
 			}
 		}
 	}
@@ -635,7 +631,8 @@ func (s *VR) RecoveryResponseListener() {
 					s.RecoveryStatus.LargestViewSeen = recvViewNum
 				}
 				if recvIsPrimary == true {
-					log.Println("Got a recovery log from node ", from)
+					log.Printf("Received recovery log from primary %v, length = %v, ViewNumber = %v, OpNumber = %v, CommitNumber = %v", 
+						from, len(recvLog), recvViewNum, recvOpNum, recvCommitNum)
 					if s.RecoveryStatus.PrimaryViewNum < recvViewNum {
 						s.RecoveryStatus.LogRecv = recvLog
 						s.RecoveryStatus.PrimaryViewNum = recvViewNum
@@ -649,10 +646,16 @@ func (s *VR) RecoveryResponseListener() {
 				if s.CheckRecoveryResponseQuorum() == true {
 					if s.RecoveryStatus.PrimaryViewNum == s.RecoveryStatus.LargestViewSeen {
 						s.lock.Lock()
-						if s.ViewNumber != -1 || s.CommitNumber == -1 {
+						if s.Log == nil {
 							s.Log = s.RecoveryStatus.LogRecv
 						} else {
-							//Appending to logs
+							// Cancel uncommitted operations
+							for i := s.CommitNumber+1; i < int64(len(s.Log)); i++ {
+								if s.Log[i].ResultChan != nil {
+									*s.Log[i].ResultChan <- errors.New("Error: View changed. Operation canceled.")
+								}
+							}
+							// Append received updates to log
 							s.Log = append(s.Log[:s.CommitNumber+1], s.RecoveryStatus.LogRecv...)
 						}
 
@@ -701,6 +704,8 @@ func (s *VR) ResetRecoveryStatus() {
 
 // Internal functions, do not use lock
 func (s *VR) playLogUntil(end int64) {
+	log.Printf("Playing log until %v ... node CommitNumber = %v, OpNumber = %v", end, s.CommitNumber, s.OpNumber)
+
 	if end <= s.CommitNumber {
 		panic("Replaying log that is shorter than current log.")
 	}
@@ -710,16 +715,20 @@ func (s *VR) playLogUntil(end int64) {
 
 	for i := s.CommitNumber + 1; i < end; i++ {
 		logEntry := s.Log[i]
+		log.Printf("s.CommitNumber = %v", s.CommitNumber)
+		log.Printf("i = %v", i)
+		log.Printf("log = %v", logEntry)
+		log.Printf("Op = %v", *logEntry.Op)
 		if tableEntry, ok := s.ClientTable[logEntry.Op.ClientID]; !ok || tableEntry.Op.RequestID < logEntry.Op.RequestID {
 			s.ClientTable[logEntry.Op.ClientID] = &ClientTableEntry{Op: logEntry.Op, Processing: true}
 		} else if !tableEntry.Processing {
 			log.Printf("tableEntry: %v", *tableEntry)
-			panic("ClientTable Entry that has finished processing should have been commited.")
+			panic("ClientTable Entry contains Op that has finished processing. It should have been marked as commited.")
 		} else if tableEntry.Op.RequestID > logEntry.Op.RequestID {
 			log.Printf("tableEntry: %v", *tableEntry)
 			panic("Smaller RequestID from the same client should not get appended to the log.")
 		}
-		s.executeNextOp()
+		s.CommitNumber = s.executeNextOp()
 	}
 
 	s.ViewNumber = s.Log[end-1].ViewNumber
@@ -777,8 +786,9 @@ func (s *VR) executeNextOp() (opNum int64) {
 	op := s.Log[num].Op
 	s.Logger.Append(s.Log[num])
 	s.ClientTable[op.ClientID].Result = s.Upcall(op)
-	if s.ClientTable[op.ClientID].ResultChan != nil {
-		*s.ClientTable[op.ClientID].ResultChan <- s.ClientTable[op.ClientID].Result
+	if s.Log[num].ResultChan != nil {
+		*s.Log[num].ResultChan <- s.ClientTable[op.ClientID].Result
+		close(*s.Log[num].ResultChan)
 	}
 	s.ClientTable[op.ClientID].Processing = false
 	return num

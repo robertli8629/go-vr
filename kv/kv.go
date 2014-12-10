@@ -29,7 +29,7 @@ const PUT = 0
 const DELETE = 1
 
 func NewKVStore(id int64, replication *vr.VR) *KVStore {
-	store := KVStore{id: id, store: make(map[string]*string), lock: new(sync.RWMutex), requestNumber: 0, replication: replication}
+	store := KVStore{id: id, store: make(map[string]*string), lock: new(sync.RWMutex), requestNumber: -1, replication: replication}
 	replication.InitializeService(store.processMessage)
 	return &store
 }

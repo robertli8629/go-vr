@@ -91,6 +91,8 @@ type TestViewChangeMessage struct {
 }
 
 type JsonMessenger struct {
+	ID int64
+	Uris map[int64]string
 	prepareMessages          chan *PrepareMessage
 	prepareOKMessages        chan *PrepareOKMessage
 	commitMessages           chan *CommitMessage
@@ -102,8 +104,9 @@ type JsonMessenger struct {
 	testViewChangeMessages   chan *TestViewChangeMessage
 }
 
-func NewJsonMessenger(port string) *JsonMessenger {
+func NewJsonMessenger(addr string, uris map[int64]string) *JsonMessenger {
 	m := &JsonMessenger{
+		Uris: uris,
 		prepareMessages:          make(chan *PrepareMessage),
 		prepareOKMessages:        make(chan *PrepareOKMessage),
 		commitMessages:           make(chan *CommitMessage),
@@ -114,8 +117,6 @@ func NewJsonMessenger(port string) *JsonMessenger {
 		recoveryResponseMessages: make(chan *RecoveryResponseMessage),
 		testViewChangeMessages:   make(chan *TestViewChangeMessage),
 	}
-
-	portStr := ":" + port
 
 	handler := rest.ResourceHandler{
 		EnableRelaxedContentType: true,
@@ -135,27 +136,27 @@ func NewJsonMessenger(port string) *JsonMessenger {
 		log.Fatal(err)
 	}
 
-	log.Println("Listening messenges from peers at", portStr)
+	log.Println("Listening messenges from peers at", addr)
 
 	go func() {
-		log.Fatal(http.ListenAndServe(portStr, &handler))
+		log.Fatal(http.ListenAndServe(addr, &handler))
 	}()
 
 	return m
 }
 
-func (s *JsonMessenger) SendPrepare(uri string, from int64, to int64, op *Operation, primaryView int64,
+func (s *JsonMessenger) SendPrepare(from int64, to int64, op *Operation, primaryView int64,
 	primaryOp int64, primaryCommit int64) (err error) {
-	return send(uri, PrepareEndpoint, PrepareMessage{from, to, op, primaryView, primaryOp, primaryCommit})
+	return send(s.Uris[to], PrepareEndpoint, PrepareMessage{from, to, op, primaryView, primaryOp, primaryCommit})
 }
 
-func (s *JsonMessenger) SendPrepareOK(uri string, from int64, to int64, backupView int64, backupOp int64) (err error) {
-	return send(uri, PrepareOKEndpoint, PrepareOKMessage{from, to, backupView, backupOp})
+func (s *JsonMessenger) SendPrepareOK(from int64, to int64, backupView int64, backupOp int64) (err error) {
+	return send(s.Uris[to], PrepareOKEndpoint, PrepareOKMessage{from, to, backupView, backupOp})
 }
 
-func (s *JsonMessenger) SendCommit(uri string, from int64, to int64, primaryView int64,
+func (s *JsonMessenger) SendCommit(from int64, to int64, primaryView int64,
 	primaryCommit int64) (err error) {
-	return send(uri, CommitEndpoint, CommitMessage{from, to, primaryView, primaryCommit})
+	return send(s.Uris[to], CommitEndpoint, CommitMessage{from, to, primaryView, primaryCommit})
 }
 
 func (s *JsonMessenger) ReceivePrepare() (from int64, to int64, op *Operation,
@@ -224,18 +225,18 @@ func (s *JsonMessenger) commitHandler(w rest.ResponseWriter, r *rest.Request) {
 
 //-----------View change functions---------------
 
-func (s *JsonMessenger) SendStartViewChange(uri string, from int64, to int64, newView int64) (err error) {
-	return send(uri, StartViewChangeEndpoint, StartViewChangeMessage{from, to, newView})
+func (s *JsonMessenger) SendStartViewChange(from int64, to int64, newView int64) (err error) {
+	return send(s.Uris[to], StartViewChangeEndpoint, StartViewChangeMessage{from, to, newView})
 }
 
-func (s *JsonMessenger) SendDoViewChange(uri string, from int64, to int64, newView int64, oldView int64, log []*LogEntry, opNum int64,
+func (s *JsonMessenger) SendDoViewChange(from int64, to int64, newView int64, oldView int64, log []*LogEntry, opNum int64,
 	commitNum int64) (err error) {
-	return send(uri, DoViewChangeEndpoint, DoViewChangeMessage{from, to, newView, oldView, log, opNum, commitNum})
+	return send(s.Uris[to], DoViewChangeEndpoint, DoViewChangeMessage{from, to, newView, oldView, log, opNum, commitNum})
 }
 
-func (s *JsonMessenger) SendStartView(uri string, from int64, to int64, newView int64, log []*LogEntry, opNum int64,
+func (s *JsonMessenger) SendStartView(from int64, to int64, newView int64, log []*LogEntry, opNum int64,
 	commitNum int64) (err error) {
-	return send(uri, StartViewEndpoint, StartViewMessage{from, to, newView, log, opNum, commitNum})
+	return send(s.Uris[to], StartViewEndpoint, StartViewMessage{from, to, newView, log, opNum, commitNum})
 }
 
 func (s *JsonMessenger) ReceiveStartViewChange() (from int64, to int64, newView int64, err error) {
@@ -367,13 +368,13 @@ func (s *JsonMessenger) ReceiveRecoveryResponse() (from int64, to int64, viewNum
 	}
 	return msg.From, msg.To, msg.ViewNum, msg.Nonce, msg.Log, msg.OpNum, msg.CommitNum, msg.IsPrimary, err
 }
-func (s *JsonMessenger) SendRecovery(uri string, from int64, to int64, nonce int64, lastCommitNum int64) (err error) {
-	return send(uri, RecoveryEndpoint, RecoveryMessage{from, to, nonce, lastCommitNum})
+func (s *JsonMessenger) SendRecovery(from int64, to int64, nonce int64, lastCommitNum int64) (err error) {
+	return send(s.Uris[to], RecoveryEndpoint, RecoveryMessage{from, to, nonce, lastCommitNum})
 }
 
-func (s *JsonMessenger) SendRecoveryResponse(uri string, from int64, to int64, viewNum int64, nonce int64, log []*LogEntry, opNum int64,
+func (s *JsonMessenger) SendRecoveryResponse(from int64, to int64, viewNum int64, nonce int64, log []*LogEntry, opNum int64,
 	commitNum int64, isPrimary bool) (err error) {
-	return send(uri, RecoveryResponseEndpoint, RecoveryResponseMessage{from, to, viewNum, nonce, log, opNum, commitNum, isPrimary})
+	return send(s.Uris[to], RecoveryResponseEndpoint, RecoveryResponseMessage{from, to, viewNum, nonce, log, opNum, commitNum, isPrimary})
 }
 
 //-----------End recovery functions------------------
