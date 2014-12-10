@@ -138,6 +138,7 @@ func (s *VR) InitializeService(callback func(op *Operation) (result interface{})
 	defer s.lock.Unlock()
 	s.Upcall = callback
 	s.Log = s.Logger.ReadAll()
+	s.OpNumber = int64(len(s.Log)) - 1
 	s.playLogUntil(int64(len(s.Log)))
 }
 

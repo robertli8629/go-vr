@@ -19,7 +19,7 @@ func NewJsonLogger(filename *string, appendOnly bool) (logger *JsonLogger) {
 	_, err := os.Stat(*filename)
 
 	mode := os.O_RDWR
-	if appendOnly && err == nil {
+	if err == nil {
 		mode = mode | os.O_APPEND
 	} else {
 		mode = mode | os.O_CREATE
@@ -29,6 +29,12 @@ func NewJsonLogger(filename *string, appendOnly bool) (logger *JsonLogger) {
 	logfile, err := os.OpenFile(*filename, mode, 0660)
 	if err != nil {
 		panic(err)
+	}
+	if !appendOnly {
+		err = logfile.Truncate(0)
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	writer := bufio.NewWriter(logfile)
