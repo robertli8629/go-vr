@@ -34,8 +34,8 @@ func NewKVStore(id int64, replication *vr.VR) *KVStore {
 	return &store
 }
 
-func (s *KVStore) generateMessage(op OpType, key string, value string) (msg *string) {
-	b, _ := json.Marshal(&Message{op, key, value})
+func (s *KVStore) generateMessage(opType OpType, key string, value string) (msg *string) {
+	b, _ := json.Marshal(&Message{opType, key, value})
 	str := string(b)
 	return &str
 }
@@ -44,7 +44,9 @@ func (s *KVStore) processMessage(op *vr.Operation) (result interface{}) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	s.requestNumber = op.RequestID
+	if op.ClientID == s.id {
+		s.requestNumber = op.RequestID
+	}
 
 	var message Message
 	err := json.Unmarshal([]byte(*op.Message), &message)

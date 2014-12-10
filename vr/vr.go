@@ -138,8 +138,7 @@ func (s *VR) InitializeService(callback func(op *Operation) (result interface{})
 	defer s.lock.Unlock()
 	s.Upcall = callback
 	s.Log = s.Logger.ReadAll()
-	s.OpNumber = int64(len(s.Log)) - 1
-	s.playLogUntil(int64(len(s.Log)))
+	s.playLogUntil(int64(len(s.Log)), false)
 }
 
 func (s *VR) RequestAsync(op *Operation) <-chan interface{} {
@@ -196,17 +195,20 @@ func (s *VR) ReceivePrepare(from int64, to int64, op *Operation, primaryView int
 		return
 	}
 
+	//TODO: Handle msg from older views
+	if primaryView < s.ViewNumber {
+		return
+	}
+
 	if primaryOp > s.OpNumber+1 {
 		go s.StartRecovery()
 		return
 	}
 
-	// Out-of-order message
-	if primaryOp != s.OpNumber+1 {
+	// Ignore out-of-order message
+	if primaryOp < s.OpNumber+1 {
 		return
 	}
-
-	//TODO: Handle msg from older views
 
 	s.commitUpTo(primaryCommit)
 
@@ -457,11 +459,10 @@ func (s *VR) StartView() {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	s.Log = s.DoViewChangeStatus.BestLogHeard
+	s.graftLog(s.DoViewChangeStatus.LargestCommitNum, s.DoViewChangeStatus.BestLogHeard[s.DoViewChangeStatus.LargestCommitNum+1:])
 	s.ViewNumber = s.ViewChangeViewNum
 	s.TriggerViewNum = s.ViewNumber
 	s.OpNumber = s.DoViewChangeStatus.BestLogOpNum
-	s.playLogUntil(s.DoViewChangeStatus.LargestCommitNum + 1)
 	s.Status = STATUS_NORMAL
 	s.IsPrimary = true
 	s.ViewChangeRestartTimer.Stop()
@@ -484,10 +485,10 @@ func (s *VR) ReceiveStartView(from int64, to int64, recvNewView int64, recvLog [
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
+	s.graftLog(recvCommitNum, recvLog[recvCommitNum+1:])
 	s.ViewNumber = recvNewView
 	s.TriggerViewNum = recvNewView
 	s.OpNumber = recvOpNum
-	s.Log = recvLog
 	s.Status = STATUS_NORMAL
 	s.IsPrimary = false
 	s.HeartbeatTimer = time.NewTimer(s.getTimerInterval())
@@ -605,21 +606,8 @@ func (s *VR) ReceiveRecoveryResponse(from int64, to int64, recvViewNum int64, re
 
 			if s.RecoveryStatus.NumOfRecoveryRspRecv >= s.QuorumSize {
 				if s.RecoveryStatus.PrimaryViewNum == s.RecoveryStatus.LargestViewSeen {
-					if s.Log == nil {
-						s.Log = s.RecoveryStatus.LogRecv
-					} else {
-						// Cancel uncommitted operations
-						for i := s.CommitNumber + 1; i < int64(len(s.Log)); i++ {
-							if s.Log[i].ResultChan != nil {
-								*s.Log[i].ResultChan <- errors.New("Error: View changed. Operation canceled.")
-							}
-						}
-						// Append received updates to log
-						s.Log = append(s.Log[:s.CommitNumber+1], s.RecoveryStatus.LogRecv...)
-					}
-
+					s.graftLog(s.RecoveryStatus.PrimaryCommitNum, s.RecoveryStatus.LogRecv)
 					s.OpNumber = s.RecoveryStatus.PrimaryOpNum
-					s.playLogUntil(s.RecoveryStatus.PrimaryCommitNum + 1)
 					s.ViewNumber = s.RecoveryStatus.PrimaryViewNum
 
 					s.Status = STATUS_NORMAL
@@ -651,14 +639,43 @@ func (s *VR) resetRecoveryStatus() {
 //------------ End of recovery functions -------------
 
 // Internal functions, do not use lock
-func (s *VR) playLogUntil(end int64) {
-	log.Printf("Playing log until %v ... node CommitNumber = %v, OpNumber = %v", end, s.CommitNumber, s.OpNumber)
+
+// Truncate and abort uncommit operations. Commit until the new CommitNumber
+func (s *VR) graftLog(updatedCommitNumber int64, logToAppend []*LogEntry) {
+	if updatedCommitNumber < s.CommitNumber {
+		panic("Unable to update log to a smaller CommitNumber")
+	}
+
+	if s.Log == nil {
+		s.Log = logToAppend
+	} else {
+		// Cancel uncommitted operations
+		for i := s.CommitNumber + 1; i < int64(len(s.Log)); i++ {
+			if s.Log[i].ResultChan != nil {
+				*s.Log[i].ResultChan <- errors.New("Error: View changed. Operation canceled.")
+			}
+		}
+		// Append received updates to log
+		s.Log = append(s.Log[:s.CommitNumber+1], logToAppend...)
+	}
+
+	s.playLogUntil(updatedCommitNumber+1, true)
+}
+
+func (s *VR) playLogUntil(end int64, writeToLog bool) {
+	log.Printf("Playing log until %v ... this node's CommitNumber = %v, OpNumber = %v", end-1, s.CommitNumber, s.OpNumber)
 
 	if end <= s.CommitNumber {
 		panic("Replaying log that is shorter than current log.")
 	}
 	if end == s.CommitNumber+1 {
 		return
+	}
+
+	// Disable logging if required
+	logger := s.Logger
+	if !writeToLog {
+		s.Logger = nil
 	}
 
 	for i := s.CommitNumber + 1; i < end; i++ {
@@ -679,6 +696,7 @@ func (s *VR) playLogUntil(end int64) {
 		s.CommitNumber = s.executeNextOp()
 	}
 
+	s.Logger = logger
 	s.ViewNumber = s.Log[end-1].ViewNumber
 	s.OpNumber = s.Log[end-1].OpNumber
 }
@@ -693,7 +711,9 @@ func (s *VR) commitUpTo(primaryCommit int64) {
 func (s *VR) executeNextOp() (opNum int64) {
 	num := s.CommitNumber + 1
 	op := s.Log[num].Op
-	s.Logger.Append(s.Log[num])
+	if s.Logger != nil {
+		s.Logger.Append(s.Log[num])
+	}
 	s.ClientTable[op.ClientID].Result = s.Upcall(op)
 	if s.Log[num].ResultChan != nil {
 		*s.Log[num].ResultChan <- s.ClientTable[op.ClientID].Result
