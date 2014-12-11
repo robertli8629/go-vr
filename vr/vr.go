@@ -348,7 +348,8 @@ func (s *VR) StartViewChange(newView int64, isTimerTriggered bool) (err error) {
 		s.ViewChangeRestartTimer = time.NewTimer(s.getTimerInterval())
 		go s.viewChangeRestartTimeout()
 		log.Printf("\n")
-		log.Printf("<<<<<<<<  Start view change for new view number %v  >>>>>>>>>>\n\n", newView)
+		log.Printf("<<<<<<<<  Start view change for new view number %v  >>>>>>>>>>\n", newView)
+		log.Printf("\n")
 		for _, to := range s.GroupIDs {
 			if to != s.Index {
 				go s.Messenger.SendStartViewChange(s.Index, to, s.ViewChangeViewNum)
@@ -376,7 +377,8 @@ func (s *VR) restartViewChange(newView int64, isTimerTriggered bool) (err error)
 	s.resetViewChangeStates()
 	s.ViewChangeViewNum = newView
 	log.Printf("\n")
-	log.Printf("<<<<<<<<  Start view change for new view number %v  >>>>>>>>>>\n\n", newView)
+	log.Printf("<<<<<<<<  Start view change for new view number %v  >>>>>>>>>>\n", newView)
+	log.Printf("\n")
 	for _, to := range s.GroupIDs {
 		if to != s.Index {
 			go s.Messenger.SendStartViewChange(s.Index, to, s.ViewChangeViewNum)
@@ -480,7 +482,8 @@ func (s *VR) StartView() {
 	//TODO: Update client table and reply to clients if needed
 
 	log.Println("Got quorum for doviewchange msg. Sent startview\n")
-	log.Printf("<<<<<<<<<<<<    This is the NEW PRIMARY. New view number: %v   >>>>>>>>>>>>\n\n", s.ViewNumber)
+	log.Printf("<<<<<<<<<<<<    This is the NEW PRIMARY. New view number: %v   >>>>>>>>>>>>\n", s.ViewNumber)
+	log.Printf("\n")
 }
 
 func (s *VR) ReceiveStartView(from int64, to int64, recvNewView int64, recvLog []*LogEntry, recvOpNum int64, recvCommitNum int64) {
@@ -505,7 +508,8 @@ func (s *VR) ReceiveStartView(from int64, to int64, recvNewView int64, recvLog [
 	s.resetViewChangeStates()
 	log.Printf("\n")
 	log.Printf("<<<<<<<<<   Received start view from new primary - node %v  >>>>>>>>>\n", from)
-	log.Printf("<<<<<<<<<               New view number: %v                 >>>>>>>>>>\n\n", s.ViewNumber)
+	log.Printf("<<<<<<<<<               New view number: %v                 >>>>>>>>>\n", s.ViewNumber)
+	log.Printf("\n")
 }
 
 func (s *VR) ReceiveStartRecovery() {
@@ -734,11 +738,12 @@ func (s *VR) executeNextOp() (opNum int64) {
 func (s *VR) printLog() {
 	if s.Logger != nil {
 		log.Printf("\n")
-		log.Println(" =====================Logs=====================")
+		log.Println(" ================================Logs================================")
 		for i := 0; i < len(s.Log); i++ {
-			log.Printf("View Number: %v, OpNum: %v, Message: %v\n", s.Log[i].ViewNumber, s.Log[i].OpNumber, s.Log[i].Op.Message)
+			log.Printf("View Number: %v, OpNum: %v, Message: %v\n", s.Log[i].ViewNumber, s.Log[i].OpNumber, *s.Log[i].Op.Message)
 		}
-		log.Println(" ==============================================\n")
+		log.Println(" ====================================================================")
+		log.Printf("\n")
 	}
 
 }
