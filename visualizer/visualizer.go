@@ -37,7 +37,7 @@ const PingPeriod = (PongWait * 9) / 10
 
 var lock sync.RWMutex
 var actualPeerUris map[int64]string
-var messageChan chan string
+var messageChan chan *ForwardMessage
 
 var homeTempl = template.Must(template.ParseFiles("template/index.template"))
 
@@ -48,7 +48,7 @@ var upgrader = websocket.Upgrader{
 }
 
 func main() {
-	messageChan = make(chan string, 1000)
+	messageChan = make(chan *ForwardMessage, 1000)
 
 	ids := make([]int64, NumInstances)
 	serverPorts := make([]int, NumInstances)
@@ -104,6 +104,12 @@ type Path struct {
 	To   int64
 }
 
+type ForwardMessage struct {
+	Method string
+	Path string
+	Message string
+}
+
 type RequestForwarder struct{}
 
 func (s *RequestForwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -112,28 +118,7 @@ func (s *RequestForwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Error reading body %v, err = %v", b, err)
 	}
 
-	messageChan <- string(b)
-
-	var path Path
-	err = json.Unmarshal(b, &path)
-	if err != nil {
-		log.Printf("Error parsing %v, err = %v", b, err)
-	}
-
-	client := &http.Client{}
-	req, err := http.NewRequest(r.Method, actualPeerUris[path.To]+r.URL.Path, bytes.NewBuffer(b))
-	if err != nil {
-		log.Printf("Error generating request %v, err = %v", req, err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(req)
-	if resp != nil {
-		defer resp.Body.Close()
-	}
-	if err != nil {
-		log.Printf("Error sending request %v, err = %v", req, err)
-	}
+	messageChan <- &ForwardMessage{r.Method, r.URL.Path, string(b)}
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -178,11 +163,37 @@ func reader(ws *websocket.Conn) {
 	ws.SetReadDeadline(time.Now().Add(PongWait))
 	ws.SetPongHandler(func(string) error { ws.SetReadDeadline(time.Now().Add(PongWait)); return nil })
 	for {
-		_, message, err := ws.ReadMessage()
+		_, messageBytes, err := ws.ReadMessage()
 		if err != nil {
 			break
 		}
-		log.Printf("Received: %v", string(message))
+
+		var message ForwardMessage
+		json.Unmarshal(messageBytes, &message)
+		forward(message)
+	}
+}
+
+func forward(message ForwardMessage) {
+	var path Path
+	err := json.Unmarshal([]byte(message.Message), &path)
+	if err != nil {
+		log.Printf("Error parsing %v, err = %v", message.Message, err)
+	}
+
+	client := &http.Client{}
+	req, err := http.NewRequest(message.Method, actualPeerUris[path.To]+message.Path, bytes.NewBuffer([]byte(message.Message)))
+	if err != nil {
+		log.Printf("Error generating request %v, err = %v", req, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if resp != nil {
+		defer resp.Body.Close()
+	}
+	if err != nil {
+		log.Printf("Error sending request %v, err = %v", req, err)
 	}
 }
 
@@ -196,7 +207,12 @@ func writer(ws *websocket.Conn) {
 		select {
 		case msg := <-messageChan:
 			ws.SetWriteDeadline(time.Now().Add(WriteWait))
-			if err := ws.WriteMessage(websocket.TextMessage, []byte(msg)); err != nil {
+			bytes, err := json.Marshal(*msg)
+			if err != nil {
+				log.Printf("Error encountered marshaling json message: %v", err)
+				return
+			}
+			if err := ws.WriteMessage(websocket.TextMessage, bytes); err != nil {
 				log.Printf("Error encountered writing message: %v", err)
 				return
 			}

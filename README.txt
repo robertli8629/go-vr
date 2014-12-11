@@ -26,4 +26,11 @@ vr:
 	module of view-stamp replication implementation
 tests:
 	folder that contains different test cases
- 
+
+
+Run visualizer:
+
+1. Enter go-vr/visualizer directory (important)
+2. Run go install
+3. Run visualizer
+4. Go to http://127.0.0.1:12341/

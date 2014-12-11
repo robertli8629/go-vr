@@ -19,6 +19,7 @@
                     <tr>
                         <th>ID</th>
                         <th>Action</th>
+                        <th>Endpoint</th>
                         <th>Message</th>
                     </tr>
                 </thead>
@@ -26,7 +27,8 @@
                     <tr>
                         <td data-bind="text: id"></td>
                         <td data-bind="html: action"></td>
-                        <td data-bind="text: text"></td>
+                        <td data-bind="text: path"></td>
+                        <td data-bind="text: message"></td>
                     </tr>
                 </tbody>
             </table>
@@ -40,11 +42,13 @@
                 self.messages = ko.observableArray([]);
 
                 conn.onclose = function(evt) {
-                    self.messages.unshift({"id":count++, "action": "", "text": "Connection closed\n"});
+                    self.messages.unshift({"id":count++, "text": "Connection closed\n"});
                 }
                 conn.onmessage = function(evt) {
                     console.log('Message received');
-                    self.messages.unshift({"id":count++, "action": '<button class="btn btn-default sendButton">Send</button>', "text": evt.data + "\n"});
+                    var json = JSON.parse(evt.data)
+                    self.messages.unshift({"id":count++, "action": '<button class="btn btn-default sendButton">'+json.Method+'</button>', 
+                        "path": json.Path, "message": json.Message + "\n"});
                 }
 
                 $(document).on("click", ".sendButton", function () {
