@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"io/ioutil"
-	"net/http"
 	"log"
+	"net/http"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"text/template"
 	"time"
@@ -37,11 +39,12 @@ var lock sync.RWMutex
 var actualPeerUris map[int64]string
 var messageChan chan string
 
-var homeTempl = template.Must(template.New("").Parse(homeHTML))
-var upgrader  = websocket.Upgrader{
+var homeTempl = template.Must(template.ParseFiles("template/index.template"))
+
+var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin:     func(r *http.Request) bool { return true },
 }
 
 func main() {
@@ -68,26 +71,26 @@ func main() {
 	for i := 0; i < NumInstances; i++ {
 		filename := "logv" + strconv.Itoa(i)
 		loggers[i] = vr.NewJsonLogger(&filename, false)
-		messengers[i] = vr.NewJsonMessenger(":" + strconv.Itoa(peerPorts[i]), proxyPeerUris)
+		messengers[i] = vr.NewJsonMessenger(":"+strconv.Itoa(peerPorts[i]), proxyPeerUris)
 		replications[i] = vr.NewVR(i == 0, int64(i), messengers[i], loggers[i], ids)
 		stores[i] = kv.NewKVStore(int64(i), replications[i])
 		servers[i] = server.NewServer(strconv.Itoa(serverPorts[i]), stores[i])
 	}
 
 	go func() {
-		if err := http.ListenAndServe(":" + strconv.Itoa(CentralForwarderPort), &RequestForwarder{}); err != nil {
+		if err := http.ListenAndServe(":"+strconv.Itoa(CentralForwarderPort), &RequestForwarder{}); err != nil {
 			log.Fatal(err)
 		}
 	}()
 
 	go func() {
-		if err := http.ListenAndServe(":" + strconv.Itoa(CentralWebServerPort), &WebServer{}); err != nil {
+		if err := http.ListenAndServe(":"+strconv.Itoa(CentralWebServerPort), &WebServer{}); err != nil {
 			log.Fatal(err)
 		}
 	}()
 
 	go func() {
-		if err := http.ListenAndServe(":" + strconv.Itoa(CentralWebSocketPort), &WebSocketServer{}); err != nil {
+		if err := http.ListenAndServe(":"+strconv.Itoa(CentralWebSocketPort), &WebSocketServer{}); err != nil {
 			log.Fatal(err)
 		}
 	}()
@@ -101,14 +104,14 @@ type Path struct {
 	To   int64
 }
 
-type RequestForwarder struct {}
+type RequestForwarder struct{}
 
 func (s *RequestForwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	b, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		log.Printf("Error reading body %v, err = %v", b, err)
 	}
-	
+
 	messageChan <- string(b)
 
 	var path Path
@@ -118,7 +121,7 @@ func (s *RequestForwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := &http.Client{}
-	req, err := http.NewRequest(r.Method, actualPeerUris[path.To] + r.URL.Path, bytes.NewBuffer(b))
+	req, err := http.NewRequest(r.Method, actualPeerUris[path.To]+r.URL.Path, bytes.NewBuffer(b))
 	if err != nil {
 		log.Printf("Error generating request %v, err = %v", req, err)
 	}
@@ -131,35 +134,40 @@ func (s *RequestForwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("Error sending request %v, err = %v", req, err)
 	}
-	
+
 	w.WriteHeader(http.StatusOK)
 }
 
-type WebServer struct {}
+type WebServer struct{}
 
 func (s *WebServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if strings.HasPrefix(r.URL.Path, "/static") {
+		path := filepath.Clean(r.URL.Path[1:])
+		if strings.HasPrefix(path, "static") {
+			http.ServeFile(w, r, path)
+			return
+		}
+	}
+
 	var v = struct {
-		Host    string
-		Data    string
+		Host string
+		Data string
 	}{
 		"127.0.0.1:" + strconv.Itoa(CentralWebSocketPort),
 		"",
 	}
-
 	homeTempl.Execute(w, &v)
 }
 
-type WebSocketServer struct {}
+type WebSocketServer struct{}
 
 func (s *WebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	log.Printf("Starting WebSocket 1")
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("%v", err)
 		return
 	}
-	log.Printf("Starting WebSocket 2")
 	go writer(ws)
 	reader(ws)
 }
@@ -170,10 +178,11 @@ func reader(ws *websocket.Conn) {
 	ws.SetReadDeadline(time.Now().Add(PongWait))
 	ws.SetPongHandler(func(string) error { ws.SetReadDeadline(time.Now().Add(PongWait)); return nil })
 	for {
-		_, _, err := ws.ReadMessage()
+		_, message, err := ws.ReadMessage()
 		if err != nil {
 			break
 		}
+		log.Printf("Received: %v", string(message))
 	}
 }
 
@@ -200,27 +209,3 @@ func writer(ws *websocket.Conn) {
 		}
 	}
 }
-
-const homeHTML = `<!DOCTYPE html>
-<html lang="en">
-    <head>
-        <title>WebSocket Example</title>
-    </head>
-    <body>
-        <pre id="messageData">{{.Data}}</pre>
-        <script type="text/javascript">
-            (function() {
-                var data = document.getElementById("messageData");
-                var conn = new WebSocket("ws://{{.Host}}/");
-                conn.onclose = function(evt) {
-                    data.textContent += "Connection closed\n";
-                }
-                conn.onmessage = function(evt) {
-                    console.log('Message received');
-                    data.textContent += evt.data + "\n";
-                }
-            })();
-        </script>
-    </body>
-</html>
-`

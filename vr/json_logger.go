@@ -9,7 +9,7 @@ import (
 
 type JsonLogger struct {
 	logfile *os.File
-	logs chan *LogEntry
+	logs    chan *LogEntry
 	encoder *json.Encoder
 }
 
@@ -70,7 +70,7 @@ func (s *JsonLogger) ReadAll() (logs []*LogEntry) {
 
 func (s *JsonLogger) writer() {
 	for {
-		entry := <- s.logs
+		entry := <-s.logs
 		s.encoder.Encode(entry)
 	}
 }

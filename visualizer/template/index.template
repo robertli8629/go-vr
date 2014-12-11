@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <title>VR Visualization</title>
+        <meta charset="utf-8">
+        <meta name="description" content="">
+        <meta name="author" content="">
+        <link rel="stylesheet" href="//cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/3.3.1/css/bootstrap.min.css">
+        <link rel="stylesheet" href="//cdnjs.cloudflare.com/ajax/libs/font-awesome/4.2.0/css/font-awesome.min.css">
+        <script type="text/javascript" src="//cdnjs.cloudflare.com/ajax/libs/jquery/2.1.1/jquery.min.js"></script>
+        <script type="text/javascript" src="//cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/3.3.1/js/bootstrap.min.js"></script>
+        <script src="//cdnjs.cloudflare.com/ajax/libs/knockout/3.2.0/knockout-min.js"></script>
+    </head>
+    <body>
+        <div class="container">
+            <h3>Messages</h3>
+            <table class="table table-hover" id="messagesTable">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Action</th>
+                        <th>Message</th>
+                    </tr>
+                </thead>
+                <tbody id="messagesTableBody" data-bind="foreach: messages">
+                    <tr>
+                        <td data-bind="text: id"></td>
+                        <td data-bind="html: action"></td>
+                        <td data-bind="text: text"></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <script type="text/javascript">
+            var messageViewModel = function () {
+                // Data
+                var self = this;
+                var conn = new WebSocket("ws://{{.Host}}/");
+                var count = 0;
+                self.messages = ko.observableArray([]);
+
+                conn.onclose = function(evt) {
+                    self.messages.unshift({"id":count++, "action": "", "text": "Connection closed\n"});
+                }
+                conn.onmessage = function(evt) {
+                    console.log('Message received');
+                    self.messages.unshift({"id":count++, "action": '<button class="btn btn-default sendButton">Send</button>', "text": evt.data + "\n"});
+                }
+
+                $(document).on("click", ".sendButton", function () {
+                    var data = ko.dataFor(this);
+                    conn.send(data.text);
+                });
+            }
+
+            ko.applyBindings(new messageViewModel());
+        </script>
+    </body>
+</html>

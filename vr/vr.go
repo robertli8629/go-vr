@@ -109,9 +109,8 @@ type VR struct {
 	IsPrimary bool
 	Messenger Messenger
 
-	Upcall         func(op *Operation) (result interface{})
-	TransferResult func(op *Operation, result interface{})
-	lock           *sync.RWMutex
+	Upcall func(op *Operation) (result interface{})
+	lock   *sync.RWMutex
 }
 
 func NewVR(isPrimary bool, index int64, messenger Messenger, logger Logger, ids []int64) (s *VR) {
