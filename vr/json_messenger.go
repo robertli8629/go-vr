@@ -303,7 +303,7 @@ func send(uri string, endpoint string, object interface{}) (err error) {
 	if err != nil {
 		return err
 	}
-	log.Printf("Message sent: PUT %v %v\n", uri+endpoint, string(b))
+	//log.Printf("Message sent: PUT %v %v\n", uri+endpoint, string(b))
 
 	req.Header.Set("Content-Type", "application/json")
 

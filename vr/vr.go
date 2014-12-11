@@ -251,6 +251,7 @@ func (s *VR) ReceivePrepareOK(from int64, to int64, backupViewNum int64, backupO
 		if int64(len(ballot)) >= (s.QuorumSize - 1) {
 			s.CommitNumber = s.executeNextOp()
 			delete(s.PrepareBallotTable, s.CommitNumber)
+			s.printLog()
 		} else {
 			break
 		}
@@ -346,8 +347,8 @@ func (s *VR) StartViewChange(newView int64, isTimerTriggered bool) (err error) {
 		s.NumOfStartViewChangeRecv++ //Increment for the one sent to ownself
 		s.ViewChangeRestartTimer = time.NewTimer(s.getTimerInterval())
 		go s.viewChangeRestartTimeout()
-
-		log.Println("Start view change for new view number", newView)
+		log.Printf("\n")
+		log.Printf("<<<<<<<<  Start view change for new view number %v  >>>>>>>>>>\n\n", newView)
 		for _, to := range s.GroupIDs {
 			if to != s.Index {
 				go s.Messenger.SendStartViewChange(s.Index, to, s.ViewChangeViewNum)
@@ -374,7 +375,8 @@ func (s *VR) restartViewChange(newView int64, isTimerTriggered bool) (err error)
 	log.Println("Restarting viewchange to view number ", newView)
 	s.resetViewChangeStates()
 	s.ViewChangeViewNum = newView
-	log.Println("Start view change for new view number", newView)
+	log.Printf("\n")
+	log.Printf("<<<<<<<<  Start view change for new view number %v  >>>>>>>>>>\n\n", newView)
 	for _, to := range s.GroupIDs {
 		if to != s.Index {
 			go s.Messenger.SendStartViewChange(s.Index, to, s.ViewChangeViewNum)
@@ -477,8 +479,8 @@ func (s *VR) StartView() {
 	//TODO: Execute committed operations that have not previously been commited at this node i.e. commit up till recvCommitNum
 	//TODO: Update client table and reply to clients if needed
 
-	log.Println("Got quorum for doviewchange msg. Sent startview")
-	log.Println("This is the NEW PRIMARY. New view number: ", s.ViewNumber)
+	log.Println("Got quorum for doviewchange msg. Sent startview\n")
+	log.Printf("<<<<<<<<<<<<    This is the NEW PRIMARY. New view number: %v   >>>>>>>>>>>>\n\n", s.ViewNumber)
 }
 
 func (s *VR) ReceiveStartView(from int64, to int64, recvNewView int64, recvLog []*LogEntry, recvOpNum int64, recvCommitNum int64) {
@@ -501,9 +503,9 @@ func (s *VR) ReceiveStartView(from int64, to int64, recvNewView int64, recvLog [
 	//TODO: Update client table if needed
 
 	s.resetViewChangeStates()
-
-	log.Println("Received start view from new primary - node ", from)
-	log.Println("New view number: ", s.ViewNumber)
+	log.Printf("\n")
+	log.Printf("<<<<<<<<<   Received start view from new primary - node %v  >>>>>>>>>\n", from)
+	log.Printf("<<<<<<<<<               New view number: %v                 >>>>>>>>>>\n\n", s.ViewNumber)
 }
 
 func (s *VR) ReceiveStartRecovery() {
@@ -615,6 +617,7 @@ func (s *VR) ReceiveRecoveryResponse(from int64, to int64, recvViewNum int64, re
 					(s.RecoveryStatus.RecoveryRestartTimer).Stop()
 					s.resetRecoveryStatus()
 					log.Println("Recovery success. Updated to view number ", s.ViewNumber)
+					s.printLog()
 				}
 			}
 		} else {
@@ -702,8 +705,13 @@ func (s *VR) playLogUntil(end int64, writeToLog bool) {
 }
 
 func (s *VR) commitUpTo(primaryCommit int64) {
+	doPrint := false
 	for s.CommitNumber < primaryCommit && s.CommitNumber < s.OpNumber {
 		s.CommitNumber = s.executeNextOp()
+		doPrint = true
+	}
+	if doPrint {
+		s.printLog()
 	}
 }
 
@@ -721,4 +729,16 @@ func (s *VR) executeNextOp() (opNum int64) {
 	}
 	s.ClientTable[op.ClientID].Processing = false
 	return num
+}
+
+func (s *VR) printLog() {
+	if s.Logger != nil {
+		log.Printf("\n")
+		log.Println(" =====================Logs=====================")
+		for i := 0; i < len(s.Log); i++ {
+			log.Printf("View Number: %v, OpNum: %v, Message: %v\n", s.Log[i].ViewNumber, s.Log[i].OpNumber, s.Log[i].Op.Message)
+		}
+		log.Println(" ==============================================\n")
+	}
+
 }
