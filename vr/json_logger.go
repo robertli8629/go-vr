@@ -5,14 +5,12 @@ import (
 	"encoding/json"
 	"log"
 	"os"
-	"sync"
 )
 
 type JsonLogger struct {
 	logfile *os.File
-	writer  *bufio.Writer
+	logs chan *LogEntry
 	encoder *json.Encoder
-	lock    *sync.Mutex
 }
 
 func NewJsonLogger(filename *string, appendOnly bool) (logger *JsonLogger) {
@@ -37,22 +35,18 @@ func NewJsonLogger(filename *string, appendOnly bool) (logger *JsonLogger) {
 		}
 	}
 
-	writer := bufio.NewWriter(logfile)
-	return &JsonLogger{logfile: logfile, writer: writer, encoder: json.NewEncoder(writer), lock: new(sync.Mutex)}
+	logger = &JsonLogger{logfile: logfile, logs: make(chan *LogEntry, 1000), encoder: json.NewEncoder(logfile)}
+	go logger.writer()
+
+	return logger
 }
 
 func (s *JsonLogger) Append(entry *LogEntry) (err error) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-	err = s.encoder.Encode(entry)
-	go s.writer.Flush()
-	return err
+	s.logs <- entry
+	return nil
 }
 
 func (s *JsonLogger) ReadAll() (logs []*LogEntry) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-
 	// Rewind to the beginning
 	s.logfile.Seek(0, 0)
 
@@ -72,4 +66,11 @@ func (s *JsonLogger) ReadAll() (logs []*LogEntry) {
 	s.logfile.Seek(0, 2)
 
 	return logs
+}
+
+func (s *JsonLogger) writer() {
+	for {
+		entry := <- s.logs
+		s.encoder.Encode(entry)
+	}
 }
