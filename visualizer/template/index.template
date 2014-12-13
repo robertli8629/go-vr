@@ -13,6 +13,27 @@
     </head>
     <body>
         <div class="container">
+            <h3>States</h3>
+            <table class="table table-hover" id="statesTable">
+                <thead>
+                    <tr>
+                        <th>Index</th>
+                        <th>ViewNumber</th>
+                        <th>OpNumber</th>
+                        <th>CommitNumber</th>
+                    </tr>
+                </thead>
+                <tbody id="statesTableBody" data-bind="foreach: states">
+                    <tr>
+                        <td data-bind="text: Index"></td>
+                        <td data-bind="text: ViewNumber"></td>
+                        <td data-bind="text: OpNumber"></td>
+                        <td data-bind="text: CommitNumber"></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="container">
             <h3>Messages</h3>
             <table class="table table-hover" id="messagesTable">
                 <thead>
@@ -40,20 +61,25 @@
                 var conn = new WebSocket("ws://{{.Host}}/");
                 var count = 0;
                 self.messages = ko.observableArray([]);
+                self.states = ko.observableArray([]);
 
                 conn.onclose = function(evt) {
-                    self.messages.unshift({"id":count++, "text": "Connection closed\n"});
+                    self.messages.unshift({"id":count++, "action": "", "path": "", "message": "Connection closed\n"});
                 }
                 conn.onmessage = function(evt) {
                     console.log('Message received');
                     var json = JSON.parse(evt.data)
-                    self.messages.unshift({"id":count++, "action": '<button class="btn btn-default sendButton">'+json.Method+'</button>', 
-                        "path": json.Path, "message": json.Message + "\n"});
+                    if (json.hasOwnProperty('Message')) {
+                        self.messages.unshift({"id":count++, "action": '<button class="btn btn-default sendButton">'+json.Method+'</button>', 
+                            "path": json.Path, "message": json.Message + "\n", "original_text": evt.data});
+                    } else {
+                        self.states.splice(json.Index, 1, json)
+                    }
                 }
 
                 $(document).on("click", ".sendButton", function () {
                     var data = ko.dataFor(this);
-                    conn.send(data.text);
+                    conn.send(data.original_text);
                 });
             }
 

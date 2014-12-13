@@ -47,6 +47,8 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin:     func(r *http.Request) bool { return true },
 }
 
+var replications []*vr.VR
+
 func main() {
 	messageChan = make(chan *ForwardMessage, 1000)
 
@@ -65,7 +67,7 @@ func main() {
 
 	loggers := make([]*vr.JsonLogger, NumInstances)
 	messengers := make([]*vr.JsonMessenger, NumInstances)
-	replications := make([]*vr.VR, NumInstances)
+	replications = make([]*vr.VR, NumInstances)
 	stores := make([]*kv.KVStore, NumInstances)
 	servers := make([]*server.Server, NumInstances)
 	for i := 0; i < NumInstances; i++ {
@@ -108,6 +110,13 @@ type ForwardMessage struct {
 	Method string
 	Path string
 	Message string
+}
+
+type State struct {
+	Index int64
+	ViewNumber int64
+	OpNumber int64
+	CommitNumber int64
 }
 
 type RequestForwarder struct{}
@@ -167,7 +176,7 @@ func reader(ws *websocket.Conn) {
 		if err != nil {
 			break
 		}
-
+		log.Printf("messageBytes: %v\n", string(messageBytes))
 		var message ForwardMessage
 		json.Unmarshal(messageBytes, &message)
 		forward(message)
@@ -180,7 +189,7 @@ func forward(message ForwardMessage) {
 	if err != nil {
 		log.Printf("Error parsing %v, err = %v", message.Message, err)
 	}
-
+	log.Printf("message: %v\n", message)
 	client := &http.Client{}
 	req, err := http.NewRequest(message.Method, actualPeerUris[path.To]+message.Path, bytes.NewBuffer([]byte(message.Message)))
 	if err != nil {
@@ -206,7 +215,7 @@ func writer(ws *websocket.Conn) {
 	for {
 		select {
 		case msg := <-messageChan:
-			ws.SetWriteDeadline(time.Now().Add(WriteWait))
+			//ws.SetWriteDeadline(time.Now().Add(WriteWait))
 			bytes, err := json.Marshal(*msg)
 			if err != nil {
 				log.Printf("Error encountered marshaling json message: %v", err)
@@ -215,6 +224,14 @@ func writer(ws *websocket.Conn) {
 			if err := ws.WriteMessage(websocket.TextMessage, bytes); err != nil {
 				log.Printf("Error encountered writing message: %v", err)
 				return
+			}
+			//var path Path
+			//path := json.Unmarshal(msg.Message, &path)
+			//rep := 
+			//bytes, _ := json.Marshal(&State{Index: replications[path.From].Index, })
+			for i := 0; i < NumInstances; i++ {
+				b, _ := json.Marshal(&State{Index: replications[i].Index, ViewNumber: replications[i].ViewNumber, OpNumber: replications[i].OpNumber, CommitNumber: replications[i].CommitNumber, })
+				ws.WriteMessage(websocket.TextMessage, b)
 			}
 		case <-PingTicker.C:
 			ws.SetWriteDeadline(time.Now().Add(WriteWait))
@@ -225,3 +242,5 @@ func writer(ws *websocket.Conn) {
 		}
 	}
 }
+
+
